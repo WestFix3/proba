@@ -45,8 +45,8 @@ public class Camera {
         }
 
         // Hibakereséshez:
-        System.out.printf("PlayerY: %.1f | TargetY: %.1f | CameraY: %.1f | MaxY: %.1f%n",
-                player.getY(), targetY, y, maxCameraY);
+        //System.out.printf("PlayerY: %.1f | TargetY: %.1f | CameraY: %.1f | MaxY: %.1f%n",
+                //player.getY(), targetY, y, maxCameraY);
     }
 
     // Getterek

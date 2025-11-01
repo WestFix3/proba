@@ -2,20 +2,21 @@ package entities.weapons;
 
 import entities.Entity;
 import entities.Projectile;
+import java.util.List;
+import entities.Enemy;
 
-/**
- * Alapvető fegyver osztály, amely lövedékeket képes kilőni.
- */
-public class Weapon {
+public class Weapon implements WeaponInterface {
 
-    private int damage;
-    private float fireRate; // Másodpercenkénti lövések száma
-    private float lastShotTime; // Az utolsó lövés óta eltelt idő
+    private float damage;
+    private float baseDamage;
+    private float fireRate;
+    private float lastShotTime;
 
     private float projectileSpeed;
     private float projectileSize;
 
-    public Weapon(int damage, float fireRate, float projectileSpeed, float projectileSize) {
+    public Weapon(float damage, float fireRate, float projectileSpeed, float projectileSize) {
+        this.baseDamage = damage;
         this.damage = damage;
         this.fireRate = fireRate;
         this.projectileSpeed = projectileSpeed;
@@ -23,51 +24,52 @@ public class Weapon {
         this.lastShotTime = Float.NEGATIVE_INFINITY;
     }
 
-    /**
-     * Megpróbál kilőni egy lövedéket.
-     * @param shooter Az entitás, ami lő.
-     * @param startX A lövedék kezdő X koordinátája.
-     * @param startY A lövedék kezdő Y koordinátája.
-     * @param targetX A cél X koordinátája.
-     * @param targetY A cél Y koordinátája.
-     * @param currentTime A játék aktuális ideje.
-     * @return Egy Projectile objektum, ha sikeresen lőtt, különben null.
-     */
+    @Override
     public Projectile shoot(Entity shooter, float startX, float startY, float targetX, float targetY, float currentTime) {
         float requiredTime = 1.0f / fireRate;
         float timeSinceLastShot = currentTime - lastShotTime;
 
-        // DEBUG: Cooldown ellenőrzés értékei
-        System.out.println("DEBUG (Weapon.shoot): currentTime=" + currentTime + ", lastShotTime=" + lastShotTime + ", timeSinceLastShot=" + timeSinceLastShot + ", requiredTime=" + requiredTime);
-
-        // --- COOLDOWN ELLENŐRZÉS ---
         if (timeSinceLastShot < requiredTime) {
-            System.out.println("DEBUG (Weapon.shoot): Fegyver cooldownon van. Hátralévő idő: " + (requiredTime - timeSinceLastShot));
-            return null; // Még cooldownon van
+            return null;
         }
-        // ------------------------------------------
 
-        // Irányvektor kiszámítása
         float dirX = targetX - startX;
         float dirY = targetY - startY;
         float length = (float) Math.sqrt(dirX * dirX + dirY * dirY);
 
-        if (length == 0) { // Elkerüljük a nullával való osztást
-            System.out.println("DEBUG (Weapon.shoot): Célpont túl közel van, vagy ugyanazon a pozíción, nem lehet lövedéket kilőni (hossz=0).");
+        if (length == 0) {
             return null;
         }
 
-        dirX /= length; // Normalizálás
+        dirX /= length;
         dirY /= length;
 
-        lastShotTime = currentTime; // Frissítjük az utolsó lövés idejét az aktuális időre
-        System.out.println("DEBUG (Weapon.shoot): Lövés SIKERES! lastShotTime frissítve: " + lastShotTime);
+        lastShotTime = currentTime;
 
-
-        // Létrehozzuk a lövedéket
         float projX = startX + shooter.getWidth() / 2 - projectileSize / 2;
         float projY = startY + shooter.getHeight() / 2 - projectileSize / 2;
 
         return new Projectile(projX, projY, projectileSize, projectileSize, damage, projectileSpeed, dirX, dirY, shooter);
+    }
+
+    @Override
+    public void attack(Entity attacker, List<Enemy> enemies) {
+        // Ez egy távolharci fegyver, nem csinál semmit a közelharci támadásra.
+        return;
+    }
+
+    @Override
+    public float getBaseDamage() {
+        return baseDamage;
+    }
+
+    @Override
+    public float getDamage() {
+        return damage;
+    }
+
+    @Override
+    public void setDamage(float newDamage) {
+        this.damage = newDamage;
     }
 }

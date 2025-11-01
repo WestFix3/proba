@@ -13,6 +13,22 @@ public class Rectangle {
         this.height = height;
     }
 
+    public float getX() {
+        return x;
+    }
+
+    public float getY() {
+        return y;
+    }
+
+    public float getWidth() {
+        return width;
+    }
+
+    public float getHeight() {
+        return height;
+    }
+
     /**
      * Ellenőrzi, hogy ez a téglalap metszi-e egy másik téglalapot.
      * @param other A másik téglalap.

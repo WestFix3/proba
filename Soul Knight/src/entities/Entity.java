@@ -37,6 +37,7 @@ public abstract class Entity {
     public float getWidth() { return width; }
     public float getHeight() { return height; }
 
+
     public void setX(float x) { this.x = x; } // ÚJ SETTER
     public void setY(float y) { this.y = y; } // ÚJ SETTER
 }
