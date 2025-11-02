@@ -28,6 +28,7 @@ public class Effect extends Entity {
 
     private Texture texture;
     private EffectType type;
+    private int id = -1;
     public boolean isCollected = false;
 
     // A konstruktorban megkapja az effektus típusát
@@ -69,5 +70,13 @@ public class Effect extends Entity {
 
     public EffectType getType() {
         return type;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
     }
 }

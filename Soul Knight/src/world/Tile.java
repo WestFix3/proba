@@ -133,6 +133,10 @@ public class Tile extends Rectangle {
         return isDestroyable() && health <= 0;
     }
 
+    public void setHealth(float health) {
+        this.health = health;
+    }
+
     public void updateTextureByHealth() {
         if (isDestroyable() && health > 0) {
             if (damageTextures != null) {

@@ -25,6 +25,7 @@ import org.lwjgl.glfw.*;
 import org.lwjgl.opengl.*;
 import org.lwjgl.system.*;
 
+import java.util.Collections;
 import java.io.IOException;
 import java.nio.IntBuffer;
 import java.nio.DoubleBuffer;
@@ -72,6 +73,7 @@ public class GameManager {
     private int myPlayerId = -1;
     private Map<Integer, Player> otherPlayers = new HashMap<>();
     private Map<Integer, PlayerState> serverPlayerStates = new HashMap<>();
+    private Set<String> processedGateEvents = new HashSet<>();
 
     // Interpolációhoz
     private float interpolationSpeed = 5.0f;
@@ -96,6 +98,16 @@ public class GameManager {
     private List<Projectile> projectiles;
     private List<Effect> effects;
     private List<PlayerEffect> playerEffects;
+
+    private Map<Integer, Effect> activeEffectsById;
+    private int nextEffectId = 1;
+    private Random effectRandom = new Random();
+    private long currentDungeonSeed = -1L;
+    private int currentLevelIndex = 1;
+    private float enemyDamageMultiplier = 1.0f;
+    private float enemySpeedMultiplier = 1.0f;
+    private float enemyPathDeviationChance = 0.25f;
+    private float enemyPathDeviationRadius = 2.0f;
 
     private Map<Effect.EffectType, Texture> effectTextures;
 
@@ -184,6 +196,16 @@ public class GameManager {
     private void initGameplay(String playerName, Player.Ability ability) {
         this.playerName = playerName;
         this.playerAbility = ability;
+
+        this.currentLevelIndex = 1;
+        this.enemyDamageMultiplier = 1.0f;
+        this.enemySpeedMultiplier = 1.0f;
+        this.enemyPathDeviationChance = 0.25f;
+        this.enemyPathDeviationRadius = 2.0f;
+        this.nextEffectId = 1;
+        this.activeEffectsById = new HashMap<>();
+        this.currentDungeonSeed = System.nanoTime();
+        this.effectRandom = new Random(currentDungeonSeed ^ 0xBEEFL);
 
         this.enemy = new Enemy(0, 0, 0, 0, null, 0, null, null, null, null);
         this.boss = new Boss(0, 0, 0, 0, null, 0, null, null, null, null);
@@ -321,7 +343,8 @@ public class GameManager {
         }
         textRenderer = new TextRenderer("CRIT", new java.awt.Font("Arial", java.awt.Font.BOLD, 48), java.awt.Color.WHITE);
 
-        currentDungeon = DungeonGenerator.generateRandomDungeon(
+        currentDungeon = DungeonGenerator.generateRandomDungeonWithSeed(
+                currentDungeonSeed,
                 32,
                 tileTextures,
                 enemyTexture,
@@ -343,7 +366,10 @@ public class GameManager {
                 textRenderer
         );
 
+        applyDifficultyToEnemies();
+
         setupPlayerDamageListener(player);
+        setupPlayerGateListener(player);
 
         for (Enemy enemy : currentDungeon.getEnemies()) {
             enemy.setTargetPlayer(this.player);
@@ -743,6 +769,15 @@ public class GameManager {
         this.playerName = playerName;
         this.playerAbility = ability;
 
+        this.currentLevelIndex = 1;
+        this.enemyDamageMultiplier = 1.0f;
+        this.enemySpeedMultiplier = 1.0f;
+        this.enemyPathDeviationChance = 0.25f;
+        this.enemyPathDeviationRadius = 2.0f;
+        this.nextEffectId = 1;
+        this.activeEffectsById = new HashMap<>();
+        this.effectRandom = new Random();
+
         // Alap inicializáció - UGYANAZ
         this.enemy = new Enemy(0, 0, 0, 0, null, 0, null, null, null, null);
         this.boss = new Boss(0, 0, 0, 0, null, 0, null, null, null, null);
@@ -842,6 +877,7 @@ public class GameManager {
         );
 
         setupPlayerDamageListener(player);
+        setupPlayerGateListener(player);
 
         // ✨ JAVÍTÁS: Enemy beállításokat KÉSŐBB, amikor már van dungeon
         // for (Enemy enemy : currentDungeon.getEnemies()) { // ← EZT TÁVOLÍTSD EL!
@@ -934,10 +970,28 @@ public class GameManager {
     }
 
     private void loadNextLevel() {
+        advanceDifficultyScaling();
         cleanupForNextLevel();
         projectiles.clear();
-        effects.clear();
-        playerEffects.clear();
+        if (effects != null) {
+            effects.clear();
+        } else {
+            effects = new ArrayList<>();
+        }
+        if (playerEffects != null) {
+            playerEffects.clear();
+        } else {
+            playerEffects = new ArrayList<>();
+        }
+        processedGateEvents.clear();
+
+        if (activeEffectsById == null) {
+            activeEffectsById = new HashMap<>();
+        } else {
+            activeEffectsById.clear();
+        }
+        nextEffectId = 1;
+        processedGateEvents.clear();
 
         weaponFactory.loadWeaponSprites();
 
@@ -1076,7 +1130,11 @@ public class GameManager {
         }
         textRenderer = new TextRenderer("CRIT", new java.awt.Font("Arial", java.awt.Font.BOLD, 48), java.awt.Color.WHITE);
 
-        currentDungeon = DungeonGenerator.generateRandomDungeon(
+        currentDungeonSeed = System.nanoTime();
+        effectRandom = new Random(currentDungeonSeed ^ 0xBEEFL);
+
+        currentDungeon = DungeonGenerator.generateRandomDungeonWithSeed(
+                currentDungeonSeed,
                 32,
                 tileTextures,
                 enemyTexture,
@@ -1090,6 +1148,12 @@ public class GameManager {
                 effectTextures,
                 teleportPadTexture
         );
+
+        applyDifficultyToEnemies();
+
+        if (isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+            multiplayerClient.sendTCPMessage("BROADCAST:DUNGEON_SEED:" + currentDungeonSeed);
+        }
 
         float spawnX = currentDungeon.getPlayerSpawnX();
         float spawnY = currentDungeon.getPlayerSpawnY();
@@ -1446,13 +1510,18 @@ public class GameManager {
                             projectile.setAlive(false);
                             if (tile.getType() == Tile.TileType.BOX) {
                                 tile.takeDamage(1);
-                                if (tile.isDestroyed()) {
+                                boolean destroyed = tile.isDestroyed();
+                                if (destroyed) {
                                     tile.setType(Tile.TileType.FLOOR);
                                     tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                    createRandomEffect(tile.getX(), tile.getY());
+                                    Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                    if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                        broadcastEffectSpawn(spawnedEffect);
+                                    }
                                 } else {
                                     tile.updateTextureByHealth();
                                 }
+                                sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
                             }
                             hitSomething = true;
                             break;
@@ -1493,7 +1562,7 @@ public class GameManager {
         // Effect kezelés - UGYANAZ
         checkEffectCollision();
         updatePlayerEffects(deltaTime);
-        effects.removeIf(effect -> effect.isCollected);
+        removeCollectedEffects();
         currentDungeon.getEnemies().removeIf(enemy -> !enemy.isAlive());
     }
 
@@ -1552,6 +1621,33 @@ public class GameManager {
         float dx = x2 - x1;
         float dy = y2 - y1;
         return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    private void forceEnemyRetarget(int deadPlayerId) {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        Player deadPlayer;
+        if (deadPlayerId == myPlayerId || deadPlayerId < 0) {
+            deadPlayer = player;
+        } else {
+            deadPlayer = otherPlayers.get(deadPlayerId);
+        }
+
+        for (Enemy enemy : currentDungeon.getEnemies()) {
+            if (!enemy.isAlive()) {
+                continue;
+            }
+
+            Player currentTarget = enemy.getTargetPlayer();
+            if (currentTarget == null || currentTarget == deadPlayer || !currentTarget.isAlive()) {
+                Player newTarget = findClosestPlayerToEnemy(enemy);
+                if (newTarget != null && newTarget.isAlive()) {
+                    enemy.setTargetPlayer(newTarget);
+                }
+            }
+        }
     }
 
     private void updateGameplaySingleplayer(float deltaTime, double currentTime) {
@@ -1621,13 +1717,18 @@ public class GameManager {
                             projectile.setAlive(false);
                             if (tile.getType() == Tile.TileType.BOX) {
                                 tile.takeDamage(1);
-                                if (tile.isDestroyed()) {
+                                boolean destroyed = tile.isDestroyed();
+                                if (destroyed) {
                                     tile.setType(Tile.TileType.FLOOR);
                                     tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                    createRandomEffect(tile.getX(), tile.getY());
+                                    Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                    if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                        broadcastEffectSpawn(spawnedEffect);
+                                    }
                                 } else {
                                     tile.updateTextureByHealth();
                                 }
+                                sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
                             }
                             hitSomething = true;
                             break;
@@ -1666,7 +1767,7 @@ public class GameManager {
 
         checkEffectCollision();
         updatePlayerEffects(deltaTime);
-        effects.removeIf(effect -> effect.isCollected);
+        removeCollectedEffects();
         currentDungeon.getEnemies().removeIf(enemy -> !enemy.isAlive());
     }
 
@@ -1804,6 +1905,9 @@ public class GameManager {
             case "PLAYER_ID":
                 myPlayerId = Integer.parseInt(data);
                 multiplayerClient.setPlayerId(myPlayerId);
+                if (player != null) {
+                    player.setId(myPlayerId);
+                }
                 //System.out.println("🎮 PLAYER ID FRISSÍTVE: " + myPlayerId);
                 break;
 
@@ -1896,6 +2000,18 @@ public class GameManager {
                 handlePlayerDamageUpdate(data);
                 break;
 
+            case "EFFECT_SPAWN":
+                handleEffectSpawnMessage(data);
+                break;
+
+            case "EFFECT_PICKUP":
+                handleEffectPickupMessage(data);
+                break;
+
+            case "GATE_TRIGGER":
+                handleGateTriggerMessage(data);
+                break;
+
             case "PROJECTILE_CREATED":
                 handleProjectileCreated(data);
                 break;
@@ -1919,6 +2035,10 @@ public class GameManager {
 
             case "PROJECTILE_UPDATE":
                 handleProjectileUpdate(data);
+                break;
+
+            case "TILE_UPDATE":
+                handleTileUpdate(data);
                 break;
 
             case "GAME_STATE":
@@ -1981,7 +2101,10 @@ public class GameManager {
                 tileTextures.get(Tile.TileType.FLOOR), textRenderer
         );
 
+        player.setId(myPlayerId);
+
         setupPlayerDamageListener(player);
+        setupPlayerGateListener(player);
 
         // ✨ FONTOS: Sprite-ok beállítása
         Sprite walkSprite = null;
@@ -2042,6 +2165,10 @@ public class GameManager {
             if (!isAlive) {
                 System.out.println("💀 PLAYER DIED - Switching to GAME_OVER");
                 currentState = GameState.GAME_OVER;
+                if (isMultiplayer) {
+                    int deadId = damagedPlayer.getId() >= 0 ? damagedPlayer.getId() : myPlayerId;
+                    forceEnemyRetarget(deadId);
+                }
             }
 
             // Küldés a szervernek
@@ -2052,6 +2179,150 @@ public class GameManager {
         });
 
         System.out.println("✅ Damage listener setup complete");
+    }
+
+    private void setupPlayerGateListener(Player player) {
+        if (player == null) {
+            return;
+        }
+
+        player.setGateOpenListener(this::handleGateOpenRequest);
+    }
+
+    private void handleGateOpenRequest(List<Tile> gateGroup) {
+        if (gateGroup == null || gateGroup.isEmpty()) {
+            return;
+        }
+
+        String eventKey = buildGateEventKey(gateGroup);
+        if (processedGateEvents.contains(eventKey)) {
+            return;
+        }
+
+        processedGateEvents.add(eventKey);
+        if (player != null) {
+            player.triggerGateAnimation(gateGroup);
+        }
+
+        if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+            multiplayerClient.sendTCPMessage("GATE_TRIGGER:" + eventKey);
+        }
+    }
+
+    private String buildGateEventKey(List<Tile> gateGroup) {
+        List<Tile> sorted = new ArrayList<>(gateGroup);
+        sorted.sort(Comparator.comparingInt(Tile::getGridX).thenComparingInt(Tile::getGridY));
+
+        StringBuilder builder = new StringBuilder();
+        for (Tile tile : sorted) {
+            if (builder.length() > 0) {
+                builder.append('|');
+            }
+            builder.append(tile.getGridX()).append(',').append(tile.getGridY());
+        }
+        return builder.toString();
+    }
+
+    private void handleGateTriggerMessage(String gateData) {
+        if (gateData == null || gateData.isEmpty()) {
+            return;
+        }
+
+        if (processedGateEvents.contains(gateData)) {
+            return;
+        }
+
+        List<Tile> gateGroup = findGateGroupByEventKey(gateData);
+        if (gateGroup != null) {
+            processedGateEvents.add(gateData);
+            if (player != null) {
+                player.triggerGateAnimation(gateGroup);
+            }
+        }
+    }
+
+    private List<Tile> findGateGroupByEventKey(String eventKey) {
+        if (currentDungeon == null || currentDungeon.gateCorridorGroups == null) {
+            return null;
+        }
+
+        String[] entries = eventKey.split("\\|");
+        if (entries.length == 0) {
+            return null;
+        }
+
+        String[] firstCoords = entries[0].split(",");
+        if (firstCoords.length != 2) {
+            return null;
+        }
+
+        try {
+            int targetX = Integer.parseInt(firstCoords[0]);
+            int targetY = Integer.parseInt(firstCoords[1]);
+
+            for (List<Tile> group : currentDungeon.gateCorridorGroups) {
+                if (group == null) {
+                    continue;
+                }
+
+                for (Tile tile : group) {
+                    if (tile.getGridX() == targetX && tile.getGridY() == targetY) {
+                        return group;
+                    }
+                }
+            }
+        } catch (NumberFormatException ignored) {
+        }
+
+        return null;
+    }
+
+    private void sendTileStateUpdate(int gridX, int gridY, float health, boolean destroyed) {
+        if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected()) {
+            return;
+        }
+
+        String message = String.format(Locale.US, "%d,%d,%.1f,%b", gridX, gridY, health, destroyed);
+        multiplayerClient.sendTCPMessage("TILE_UPDATE:" + message);
+    }
+
+    private void handleTileUpdate(String data) {
+        if (currentDungeon == null || data == null || data.isEmpty()) {
+            return;
+        }
+
+        String[] parts = data.split(",");
+        if (parts.length < 4) {
+            return;
+        }
+
+        try {
+            int gridX = Integer.parseInt(parts[0]);
+            int gridY = Integer.parseInt(parts[1]);
+            float health = Float.parseFloat(parts[2]);
+            boolean destroyed = Boolean.parseBoolean(parts[3]);
+
+            if (gridX < 0 || gridY < 0 ||
+                    gridX >= currentDungeon.getWidthTiles() ||
+                    gridY >= currentDungeon.getHeightTiles()) {
+                return;
+            }
+
+            Tile tile = currentDungeon.getTiles()[gridX][gridY];
+            if (tile == null) {
+                return;
+            }
+
+            if (destroyed) {
+                tile.setType(Tile.TileType.FLOOR);
+                tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
+                tile.setIsCollidable(false);
+            } else {
+                tile.setHealth(health);
+                tile.updateTextureByHealth();
+            }
+        } catch (NumberFormatException ignored) {
+        }
     }
 
     private void sendPlayerDamageUpdate(Player damagedPlayer, float damageAmount, float newHealth, boolean isAlive) {
@@ -2082,6 +2353,20 @@ public class GameManager {
 //        System.out.println("=========================================");
 
         try {
+            currentDungeonSeed = seed;
+            effectRandom = new Random(currentDungeonSeed ^ 0xBEEFL);
+            if (activeEffectsById == null) {
+                activeEffectsById = new HashMap<>();
+            } else {
+                activeEffectsById.clear();
+            }
+            if (effects == null) {
+                effects = new ArrayList<>();
+            } else {
+                effects.clear();
+            }
+            nextEffectId = 1;
+
             // Textúrák betöltése
             //System.out.println("🔄 Betöltöm a textúrákat...");
             initGameplayResources();
@@ -2094,6 +2379,9 @@ public class GameManager {
                     emptyCrateTexture, weaponFactory, textRenderer, effectTextures,
                     teleportPadTexture
             );
+            processedGateEvents.clear();
+
+            applyDifficultyToEnemies();
 
             // ✨ RÉSZLETES DEBUG
 //            System.out.println("🎯 DUNGEON DATA:");
@@ -2203,13 +2491,14 @@ public class GameManager {
         for (Enemy enemy : currentDungeon.getEnemies()) {
             if (enemy.isAlive()) {
                 // Küldjük el az enemy állapotát a szervernek
-                String enemyData = String.format(Locale.US, "%d,%.2f,%.2f,%.2f,%s,%.2f",
+                String enemyData = String.format(Locale.US, "%d,%.2f,%.2f,%.2f,%s,%.2f,%b",
                         enemy.getId(),
                         enemy.getX(),
                         enemy.getY(),
                         enemy.getHealth(),
                         enemy.isAlive(),
-                        enemy.getAttackDamage());
+                        enemy.getAttackDamage(),
+                        enemy.isCritIndicatorActive());
 
                 multiplayerClient.sendTCPMessage("ENEMY_UPDATE:" + enemyData);
             }
@@ -2542,16 +2831,25 @@ public class GameManager {
     }
 
     private void updateOtherPlayer(PlayerState playerState) {
-        if (!otherPlayers.containsKey(playerState.getPlayerId())) {
-            Player otherPlayer = createOtherPlayer(playerState);
+        Player otherPlayer = otherPlayers.get(playerState.getPlayerId());
+        if (otherPlayer == null) {
+            otherPlayer = createOtherPlayer(playerState);
             otherPlayers.put(playerState.getPlayerId(), otherPlayer);
            // System.out.println("👥 New player created: " + playerState.getPlayerName());
-        } else {
-            Player otherPlayer = otherPlayers.get(playerState.getPlayerId());
-            otherPlayer.setX(playerState.getX());
-            otherPlayer.setY(playerState.getY());
-            otherPlayer.setHealth(playerState.getHealth());
-            otherPlayer.setAlive(playerState.isAlive());
+        }
+
+        otherPlayer.setId(playerState.getPlayerId());
+        otherPlayer.setHealth(playerState.getHealth());
+        otherPlayer.setAlive(playerState.isAlive());
+
+        float newX = playerState.getX();
+        float newY = playerState.getY();
+        otherPlayer.applyNetworkMovement(newX, newY, deltaTime);
+
+        // Ha nagyon eltér a jelenlegi pozíciótól, azonnal ugorjunk a legfrissebb állapotra,
+        // így a későbbi interpoláció simán tudja követni a mozgást.
+        if (Math.abs(otherPlayer.getX() - newX) > 200f || Math.abs(otherPlayer.getY() - newY) > 200f) {
+            otherPlayer.applyNetworkMovement(newX, newY, 0f);
         }
     }
 
@@ -2588,19 +2886,28 @@ public class GameManager {
 
     private Player createOtherPlayer(PlayerState playerState) {
         // ✨ JAVÍTOTT: Ha van dungeon, használjuk a spawn pozíciót
-        float spawnX = currentDungeon != null ? currentDungeon.getPlayerSpawnX() : playerState.getX();
-        float spawnY = currentDungeon != null ? currentDungeon.getPlayerSpawnY() : playerState.getY();
+        //float spawnX = currentDungeon != null ? currentDungeon.getPlayerSpawnX() : playerState.getX();
+        //float spawnY = currentDungeon != null ? currentDungeon.getPlayerSpawnY() : playerState.getY();
 
         Player otherPlayer = new Player(
-                spawnX, spawnY,  // ✨ SPAWN POZÍCIÓ
+                playerState.getX(), playerState.getY(),
                 50, 50, playerIdleTexture, window, weaponFactory,
                 tileTextures.get(Tile.TileType.FLOOR), textRenderer
         );
 
         otherPlayer.setName(playerState.getPlayerName());
-        otherPlayer.setTargetX(spawnX);
-        otherPlayer.setTargetY(spawnY);
+        otherPlayer.setTargetX(playerState.getX());
+        otherPlayer.setTargetY(playerState.getY());
         otherPlayer.setDungeon(currentDungeon); // ✨ FONTOS: DUNGEON BEÁLLÍTÁSA
+        otherPlayer.setId(playerState.getPlayerId());
+
+        if (walkFrames != null && !walkFrames.isEmpty()) {
+            otherPlayer.setSprites(new Sprite(walkFrames, 0.1f, true));
+        }
+
+        if (activeWalkFrames != null && !activeWalkFrames.isEmpty()) {
+            otherPlayer.setActiveSprites(new Sprite(activeWalkFrames, 0.1f, false));
+        }
 
         try {
             Player.Ability ability = Player.Ability.valueOf(playerState.getAbility());
@@ -2621,11 +2928,21 @@ public class GameManager {
             int playerId = Integer.parseInt(parts[0]);
             String playerName = parts[1];
             String ability = parts[2];
+            float spawnX = 100f;
+            float spawnY = 100f;
+
+            if (parts.length >= 5) {
+                try {
+                    spawnX = Float.parseFloat(parts[3]);
+                    spawnY = Float.parseFloat(parts[4]);
+                } catch (NumberFormatException ignored) {
+                }
+            }
 
             //System.out.println("👥 Player joined: " + playerName + " (ID: " + playerId + ")");
 
             if (playerId != myPlayerId) {
-                PlayerState playerState = new PlayerState(playerId, playerName, 100, 100, 100, 100);
+                PlayerState playerState = new PlayerState(playerId, playerName, spawnX, spawnY, 100, 100);
                 playerState.setAbility(ability);
                 updateOtherPlayer(playerState);
             }
@@ -2662,6 +2979,7 @@ public class GameManager {
 
             if (otherPlayers.containsKey(playerId)) {
                 Player otherPlayer = otherPlayers.get(playerId);
+                otherPlayer.setId(playerId);
                 otherPlayer.setTargetX(x);
                 otherPlayer.setTargetY(y);
                 //System.out.println("✅ MÁSIK JÁTÉKOS FRISSÍTVE: " + playerId + " -> " + x + ", " + y);
@@ -2693,6 +3011,15 @@ public class GameManager {
         otherPlayer.setTargetY(y);
         otherPlayer.setDungeon(currentDungeon);
         otherPlayer.setAbility(Player.Ability.SPEED);
+        otherPlayer.setId(playerId);
+
+        if (walkFrames != null && !walkFrames.isEmpty()) {
+            otherPlayer.setSprites(new Sprite(walkFrames, 0.1f, true));
+        }
+
+        if (activeWalkFrames != null && !activeWalkFrames.isEmpty()) {
+            otherPlayer.setActiveSprites(new Sprite(activeWalkFrames, 0.1f, false));
+        }
 
         otherPlayers.put(playerId, otherPlayer);
 
@@ -2777,6 +3104,7 @@ public class GameManager {
                     if (!isAlive) {
                         System.out.println("💀 SAJÁT JÁTÉKOS MEGHALT A DAMAGE UPDATE-BEN!");
                         currentState = GameState.GAME_OVER;
+                        forceEnemyRetarget(damagedPlayerId);
                     }
                 }
             }
@@ -2791,12 +3119,71 @@ public class GameManager {
                     targetPlayer.setHealth(newHealth);
                     targetPlayer.setAlive(isAlive);
                     System.out.println("👥 MÁSIK JÁTÉKOS SEBZÉSE: " + damagedPlayerName + " - " + newHealth + " HP");
+                    if (!isAlive) {
+                        forceEnemyRetarget(damagedPlayerId);
+                    }
                 }
             }
 
         } catch (Exception e) {
             System.err.println("❌ Error in handlePlayerDamageUpdate: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    private void handleEffectSpawnMessage(String data) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        String[] parts = data.split(":");
+        if (parts.length < 4) {
+            return;
+        }
+
+        try {
+            int effectId = Integer.parseInt(parts[0]);
+            Effect.EffectType type = Effect.EffectType.valueOf(parts[1]);
+            float x = Float.parseFloat(parts[2]);
+            float y = Float.parseFloat(parts[3]);
+
+            if (activeEffectsById != null && activeEffectsById.containsKey(effectId)) {
+                return;
+            }
+
+            Texture texture = effectTextures != null ? effectTextures.get(type) : null;
+            Effect effect = new Effect(x, y, 32, 32, texture, type);
+            registerEffect(effect, effectId);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void handleEffectPickupMessage(String data) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        String[] parts = data.split(":");
+        if (parts.length < 3) {
+            return;
+        }
+
+        try {
+            int effectId = Integer.parseInt(parts[0]);
+            int playerId = Integer.parseInt(parts[1]);
+            Effect.EffectType type = Effect.EffectType.valueOf(parts[2]);
+
+            removeEffectById(effectId);
+
+            if (playerId == myPlayerId) {
+                if (!isHost) {
+                    applyEffect(type);
+                }
+            } else {
+                Player target = otherPlayers.get(playerId);
+                applyEffectToPlayer(type, target);
+            }
+        } catch (Exception ignored) {
         }
     }
 
@@ -2832,13 +3219,14 @@ public class GameManager {
             //System.out.println("👹 [CLIENT] Received enemy update: " + data);
 
             String[] parts = data.split(",");
-            if (parts.length >= 6) {
+            if (parts.length >= 7) {
                 int enemyId = Integer.parseInt(parts[0]);
                 float x = Float.parseFloat(parts[1]);
                 float y = Float.parseFloat(parts[2]);
                 float health = Float.parseFloat(parts[3]);
                 boolean isAlive = Boolean.parseBoolean(parts[4]);
                 float damage = Float.parseFloat(parts[5]);
+                boolean critActive = Boolean.parseBoolean(parts[6]);
 
                 Enemy targetEnemy = findEnemyById(enemyId);
                 if (targetEnemy != null) {
@@ -2854,6 +3242,7 @@ public class GameManager {
                     targetEnemy.setHealth(health);
                     targetEnemy.setAlive(isAlive);
                     targetEnemy.setDamage(damage);
+                    targetEnemy.syncCritIndicator(critActive);
 
                     //System.out.println("✅ [CLIENT] Enemy " + enemyId + " updated - Network: " + (!isHost));
                 } else {
@@ -3331,6 +3720,10 @@ public class GameManager {
         if (playerEffects != null) {
             playerEffects.clear();
         }
+
+        if (playerEffects != null) {
+            playerEffects.clear();
+        }
     }
 
     private void cleanupForNextLevel() {
@@ -3711,7 +4104,10 @@ public class GameManager {
                             if (tile.isDestroyed()) {
                                 tile.setType(Tile.TileType.FLOOR);
                                 tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                createRandomEffect(tile.getX(), tile.getY());
+                                Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    broadcastEffectSpawn(spawnedEffect);
+                                }
                             } else {
                                 tile.updateTextureByHealth();
                             }
@@ -3731,42 +4127,181 @@ public class GameManager {
         }
     }
 
-    private void createRandomEffect(float x, float y) {
-        if (Math.random() < 0.4) {
-            int rand = (int) (Math.random() * 3);
-            Effect.EffectType type;
-            Texture texture = null;
+    private Effect spawnRandomEffect(float x, float y) {
+        ensureEffectRandom();
 
-            switch (rand) {
-                case 0:
-                    type = Effect.EffectType.SPEED_BOOST;
-                    texture = effectTextures.get(Effect.EffectType.SPEED_BOOST);
-                    break;
-                case 1:
-                    type = Effect.EffectType.DAMAGE_BOOST;
-                    texture = effectTextures.get(Effect.EffectType.DAMAGE_BOOST);
-                    break;
-                case 2:
-                    type = Effect.EffectType.HEALTH_REGEN;
-                    texture = effectTextures.get(Effect.EffectType.HEALTH_REGEN);
-                    break;
-                default:
-                    return;
+        if (effectRandom.nextFloat() < 0.4f) {
+            Effect.EffectType[] availableTypes = Effect.EffectType.values();
+            if (availableTypes.length == 0) {
+                return null;
             }
-            effects.add(new Effect(x, y, 32, 32, texture, type));
+            Effect.EffectType type = availableTypes[effectRandom.nextInt(availableTypes.length)];
+            Texture texture = effectTextures != null ? effectTextures.get(type) : null;
+
+            Effect effect = new Effect(x, y, 32, 32, texture, type);
+            return registerEffect(effect);
+        }
+
+        return null;
+    }
+
+    private void ensureEffectRandom() {
+        if (effectRandom == null) {
+            effectRandom = new Random();
         }
     }
 
+    private Effect registerEffect(Effect effect) {
+        return registerEffect(effect, -1);
+    }
+
+    private Effect registerEffect(Effect effect, int explicitId) {
+        if (effect == null) {
+            return null;
+        }
+
+        if (effects == null) {
+            effects = new ArrayList<>();
+        }
+
+        if (activeEffectsById == null) {
+            activeEffectsById = new HashMap<>();
+        }
+
+        if (explicitId > 0) {
+            effect.setId(explicitId);
+            nextEffectId = Math.max(nextEffectId, explicitId + 1);
+        } else {
+            effect.setId(nextEffectId++);
+        }
+
+        activeEffectsById.put(effect.getId(), effect);
+        effects.add(effect);
+        return effect;
+    }
+
+    private void broadcastEffectSpawn(Effect effect) {
+        if (!isMultiplayer || !isHost || multiplayerClient == null || !multiplayerClient.isConnected() || effect == null) {
+            return;
+        }
+
+        String message = String.format(Locale.US, "EFFECT_SPAWN:%d:%s:%.1f:%.1f",
+                effect.getId(),
+                effect.getType().name(),
+                effect.getX(),
+                effect.getY());
+        multiplayerClient.sendTCPMessage(message);
+    }
+
+    private void sendEffectPickup(int effectId, int playerId, Effect.EffectType type) {
+        if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected() || type == null) {
+            return;
+        }
+
+        String message = String.format(Locale.US, "EFFECT_PICKUP:%d:%d:%s", effectId, playerId, type.name());
+        multiplayerClient.sendTCPMessage(message);
+    }
+
+    private void removeEffectById(int effectId) {
+        if (activeEffectsById == null) {
+            if (effects != null) {
+                effects.removeIf(effect -> effect.getId() == effectId);
+            }
+            return;
+        }
+
+        Effect effect = activeEffectsById.remove(effectId);
+        if (effect != null) {
+            effect.isCollected = true;
+            if (effects != null) {
+                effects.remove(effect);
+            }
+        }
+    }
+
+    private void applyEffectToPlayer(Effect.EffectType type, Player target) {
+        if (target == null || type == null) {
+            return;
+        }
+
+        if (target == player) {
+            applyEffect(type);
+        }
+    }
+
+    private void advanceDifficultyScaling() {
+        if (currentLevelIndex < 1) {
+            currentLevelIndex = 1;
+        }
+
+        currentLevelIndex++;
+        enemyDamageMultiplier *= 1.10f;
+        enemySpeedMultiplier *= 1.05f;
+        enemyPathDeviationChance = Math.max(0.05f, enemyPathDeviationChance * 0.9f);
+        enemyPathDeviationRadius = Math.max(0.5f, enemyPathDeviationRadius * 0.9f);
+    }
+
     private void checkEffectCollision() {
+        if (effects == null || effects.isEmpty()) {
+            return;
+        }
+
+        if (isMultiplayer && !isHost) {
+            return;
+        }
+
         Iterator<Effect> iterator = effects.iterator();
         while (iterator.hasNext()) {
             Effect effect = iterator.next();
-            if (collisionManager.checkCollision(player, effect)) {
-                applyEffect(effect.getType());
+            if (effect.isCollected) {
+                continue;
+            }
+
+            Player collector = null;
+
+            if (player != null && collisionManager.checkCollision(player, effect)) {
+                collector = player;
+            } else if (isMultiplayer) {
+                for (Player other : otherPlayers.values()) {
+                    if (other != null && other.isAlive() && collisionManager.checkCollision(other, effect)) {
+                        collector = other;
+                        break;
+                    }
+                }
+            }
+
+            if (collector != null) {
+                applyEffectToPlayer(effect.getType(), collector);
+                if (activeEffectsById != null) {
+                    activeEffectsById.remove(effect.getId());
+                }
                 effect.isCollected = true;
                 iterator.remove();
+
+                if (isMultiplayer) {
+                    int collectorId = collector == player ? myPlayerId : collector.getId();
+                    if (collectorId >= 0) {
+                        sendEffectPickup(effect.getId(), collectorId, effect.getType());
+                    }
+                }
             }
         }
+    }
+
+    private void removeCollectedEffects() {
+        if (effects == null || effects.isEmpty()) {
+            return;
+        }
+
+        effects.removeIf(effect -> {
+            if (effect.isCollected) {
+                if (activeEffectsById != null) {
+                    activeEffectsById.remove(effect.getId());
+                }
+                return true;
+            }
+            return false;
+        });
     }
 
     private void applyEffect(Effect.EffectType type) {

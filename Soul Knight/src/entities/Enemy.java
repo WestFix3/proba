@@ -41,6 +41,11 @@ public class Enemy extends Entity {
     private static final float NODE_REACH_DISTANCE = 20.0f;
     private long lastPathCalculationTime = 0;
     private static final long PATH_CALCULATION_COOLDOWN = 1000;
+    private final Random pathRandom = new Random();
+    private float baseMoveSpeed = moveSpeed;
+    private float baseAttackDamage = attackDamage;
+    private float pathDeviationChance = 0.0f;
+    private float pathDeviationRadius = 0.0f;
 
     // --- STUCK DETECTION ---
     private float stuckTimer = 0.0f;
@@ -76,6 +81,9 @@ public class Enemy extends Entity {
         this.lastY = y;
 
         this.critTextRenderer = new TextRenderer("CRIT", new java.awt.Font("Arial", java.awt.Font.BOLD, 24), java.awt.Color.RED);
+
+        this.baseMoveSpeed = this.moveSpeed;
+        this.baseAttackDamage = this.attackDamage;
     }
 
     public float getInitialHealth() {
@@ -158,6 +166,16 @@ public class Enemy extends Entity {
         int startTileY = (int)(y / tileSize);
         int targetTileX = (int)(targetX / tileSize);
         int targetTileY = (int)(targetY / tileSize);
+
+        if (pathDeviationChance > 0.0f && pathDeviationRadius > 0.0f && pathRandom.nextFloat() < pathDeviationChance) {
+            int maxDeviation = Math.max(1, Math.round(pathDeviationRadius));
+            int offsetX = pathRandom.nextInt(maxDeviation * 2 + 1) - maxDeviation;
+            int offsetY = pathRandom.nextInt(maxDeviation * 2 + 1) - maxDeviation;
+            if (offsetX != 0 || offsetY != 0) {
+                targetTileX += offsetX;
+                targetTileY += offsetY;
+            }
+        }
 
         if (!isValidTile(startTileX, startTileY)) {
             currentPath.clear();
@@ -860,6 +878,10 @@ public class Enemy extends Entity {
         clone.health = this.health;
         clone.moveSpeed = this.moveSpeed;
         clone.attackDamage = this.attackDamage;
+        clone.baseMoveSpeed = this.baseMoveSpeed;
+        clone.baseAttackDamage = this.baseAttackDamage;
+        clone.pathDeviationChance = this.pathDeviationChance;
+        clone.pathDeviationRadius = this.pathDeviationRadius;
 
         return clone;
     }
@@ -895,6 +917,16 @@ public class Enemy extends Entity {
 
     public void setDamage(float damage) {
         this.attackDamage = damage;
+    }
+
+    public void applyDifficultyMultipliers(float damageMultiplier, float speedMultiplier) {
+        this.attackDamage = baseAttackDamage * damageMultiplier;
+        this.moveSpeed = baseMoveSpeed * speedMultiplier;
+    }
+
+    public void setPathDeviation(float chance, float radius) {
+        this.pathDeviationChance = Math.max(0.0f, chance);
+        this.pathDeviationRadius = Math.max(0.0f, radius);
     }
 
     public void setId(int id) {

@@ -676,6 +676,44 @@ public class DungeonGenerator {
                 effectTextures, teleportPadTexture);
     }
 
+    public static class SpawnLocation {
+        private final float x;
+        private final float y;
+
+        public SpawnLocation(float x, float y) {
+            this.x = x;
+            this.y = y;
+        }
+
+        public float getX() {
+            return x;
+        }
+
+        public float getY() {
+            return y;
+        }
+    }
+
+    public static SpawnLocation computeSpawnLocation(long seed, int tileSize) {
+        Random random = new Random(seed);
+
+        int spawnGridCol = random.nextInt(ROOM_GRID_COLS);
+        int spawnGridRow = random.nextInt(ROOM_GRID_ROWS);
+
+        int spawnRoomX = spawnGridCol * ROOM_GRID_CELL_TILE_WIDTH
+                + random.nextInt(Math.max(1, ROOM_GRID_CELL_TILE_WIDTH - MAX_ROOM_WIDTH_TILES));
+        int spawnRoomY = spawnGridRow * ROOM_GRID_CELL_TILE_HEIGHT
+                + random.nextInt(Math.max(1, ROOM_GRID_CELL_TILE_HEIGHT - MAX_ROOM_HEIGHT_TILES));
+
+        int spawnTileX = spawnRoomX + MAX_ROOM_WIDTH_TILES / 2;
+        int spawnTileY = spawnRoomY + MAX_ROOM_HEIGHT_TILES / 2;
+
+        float spawnX = spawnTileX * tileSize;
+        float spawnY = spawnTileY * tileSize;
+
+        return new SpawnLocation(spawnX, spawnY);
+    }
+
     // ⬇️ AZ ALÁBBI METÓDUSOK VÁLTOZATLANOK MARADNAK ⬇️
     // (csak a generateRandomDungeon metódus változott)
 

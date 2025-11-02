@@ -1,12 +1,14 @@
 package core;
 
 import physics.CollisionManager;
+import  world. DungeonGenerator;
 
 import java.io.*;
 import java.net.*;
 import java.sql.SQLOutput;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MultiplayerGameServer {
@@ -25,8 +27,12 @@ public class MultiplayerGameServer {
     private GameState gameState;
     private boolean gameRunning = false;
     private long sharedDungeonSeed = -1;
+    private float sharedSpawnX = 100f;
+    private float sharedSpawnY = 100f;
     private AtomicInteger projectileIdCounter = new AtomicInteger(1);
     private Map<Integer, ProjectileState> activeProjectiles = new ConcurrentHashMap<>();
+    private Set<Integer> activeEffectIds = ConcurrentHashMap.newKeySet();
+    private Set<Integer> consumedEffectIds = ConcurrentHashMap.newKeySet();
 
     public MultiplayerGameServer() {
         this.connectedPlayers = new ConcurrentHashMap<>();
@@ -194,6 +200,12 @@ public class MultiplayerGameServer {
             case "PLAYER_DAMAGE":
                 handlePlayerDamage(data);
                 break;
+            case "EFFECT_SPAWN":
+                handleEffectSpawn(session, data);
+                break;
+            case "EFFECT_PICKUP":
+                handleEffectPickup(session, data);
+                break;
             case "PLAYER_COLLISION":
                 handlePlayerCollision(data);
                 break;
@@ -216,6 +228,10 @@ public class MultiplayerGameServer {
                 // ✨ HOST ÜZENETÉNEK TOVÁBBÍTÁSA MINDENKINEK
                 if (session.isHost()) {
                     broadcastTCPMessage(data);
+                    if (data.startsWith("DUNGEON_SEED:")) {
+                        activeEffectIds.clear();
+                        consumedEffectIds.clear();
+                    }
                 }
                 break;
             case "DISCONNECT":
@@ -226,6 +242,12 @@ public class MultiplayerGameServer {
                 break;
             case "PLAYER_STATE":
                 handlePlayerState(session, data);
+                break;
+            case "GATE_TRIGGER":
+                handleGateTrigger(session, data);
+                break;
+            case "TILE_UPDATE":
+                handleTileUpdate(session, data);
                 break;
             default:
                 System.out.println("⚠️ Unknown TCP command from player " + session.getPlayerId() + ": " + command);
@@ -323,6 +345,52 @@ public class MultiplayerGameServer {
 
         } catch (Exception e) {
             System.err.println("❌ Error handling player damage: " + e.getMessage());
+        }
+    }
+
+    private void handleEffectSpawn(PlayerSession session, String data) {
+        try {
+            if (!session.isHost()) {
+                return;
+            }
+
+            String[] parts = data.split(":");
+            if (parts.length < 4) {
+                return;
+            }
+
+            int effectId = Integer.parseInt(parts[0]);
+            if (consumedEffectIds.contains(effectId) || !activeEffectIds.add(effectId)) {
+                return;
+            }
+
+            broadcastTCPMessage("EFFECT_SPAWN:" + data);
+        } catch (Exception e) {
+            System.err.println("❌ Error handling effect spawn: " + e.getMessage());
+        }
+    }
+
+    private void handleEffectPickup(PlayerSession session, String data) {
+        try {
+            if (!session.isHost()) {
+                return;
+            }
+
+            String[] parts = data.split(":");
+            if (parts.length < 3) {
+                return;
+            }
+
+            int effectId = Integer.parseInt(parts[0]);
+            if (consumedEffectIds.contains(effectId)) {
+                return;
+            }
+
+            consumedEffectIds.add(effectId);
+            activeEffectIds.remove(effectId);
+            broadcastTCPMessage("EFFECT_PICKUP:" + data);
+        } catch (Exception e) {
+            System.err.println("❌ Error handling effect pickup: " + e.getMessage());
         }
     }
 
@@ -482,21 +550,32 @@ public class MultiplayerGameServer {
             System.out.println("🎯 Player " + session.getPlayerId() + " joined: " +
                     playerName + " (" + playerAbility + ")");  // ✨ DEBUG: valós név
 
+            if (sharedDungeonSeed != -1) {
+                updateSharedSpawnFromSeed();
+            }
+
             // Játékos állapot létrehozása
+            if (sharedDungeonSeed != -1) {
+                updateSharedSpawnFromSeed();
+            }
+
             PlayerState playerState = new PlayerState(
                     session.getPlayerId(),
                     playerName,  // ✨ A VALÓDI NEVET
-                    100.0f, 100.0f,
+                    sharedSpawnX, sharedSpawnY,
                     100.0f, 100.0f
             );
             playerState.setAbility(playerAbility);
             gameState.addPlayerState(session.getPlayerId(), playerState);
 
             // ✨ FONTOS: KÜLDJÜK EL A VALÓDI NEVET!
-            broadcastTCPMessage("PLAYER_JOINED:" +
-                    session.getPlayerId() + ":" +
-                    playerName + ":" +  // ✨ A VALÓDI NÉV
-                    playerAbility);
+            broadcastTCPMessage(String.format(Locale.US,
+                    "PLAYER_JOINED:%d:%s:%s:%.2f:%.2f",
+                    session.getPlayerId(),
+                    playerName,
+                    playerAbility,
+                    sharedSpawnX,
+                    sharedSpawnY));
 
             //System.out.println("📤 Sent PLAYER_JOINED: " + session.getPlayerId() + ":" + playerName + ":" + playerAbility);
 
@@ -556,6 +635,8 @@ public class MultiplayerGameServer {
         // ✨ JAVÍTÁS: NE hozzunk létre saját ellenségeket
         // A kliensek generálják a dungeon-t a seed alapján
         gameState.getEnemyStates().clear(); // Ürítsük ki a régi ellenségeket
+        activeEffectIds.clear();
+        consumedEffectIds.clear();
 
         System.out.println("✅ Shared dungeon ready for sync - clients will generate enemies");
     }
@@ -565,7 +646,7 @@ public class MultiplayerGameServer {
             //System.out.println("👹 [SERVER] Processing enemy update from HOST: " + data);
 
             String[] parts = data.split(",");
-            if (parts.length >= 6) {
+            if (parts.length >= 7) {
                 int enemyId = Integer.parseInt(parts[0]);
 
                 // ✨ CSAK TOVÁBBÍTJUK A HOST UPDATE-ÉT MINDEN KLIENSNEK
@@ -1004,21 +1085,41 @@ public class MultiplayerGameServer {
             System.out.println("🌱 SHARED DUNGEON SEED GENERÁLVA: " + sharedDungeonSeed);
         }
 
+        updateSharedSpawnFromSeed();
+
         // ✨ JAVÍTOTT: Küldjük el a DUNGEON_SEED-et minden kliensnek
         broadcastTCPMessage("DUNGEON_SEED:" + sharedDungeonSeed);
         //System.out.println("📤 Broadcast dungeon seed to all players: " + sharedDungeonSeed);
 
         // ✨ KÜLDJÜK EL A JÁTÉKOS ADATOKAT IS
         for (PlayerSession session : connectedPlayers.values()) {
-            broadcastTCPMessage("PLAYER_JOINED:" +
-                    session.getPlayerId() + ":" +
-                    session.getPlayerName() + ":" +
-                    session.getPlayerAbility());
+            broadcastTCPMessage(String.format(Locale.US,
+                    "PLAYER_JOINED:%d:%s:%s:%.2f:%.2f",
+                    session.getPlayerId(),
+                    session.getPlayerName(),
+                    session.getPlayerAbility(),
+                    sharedSpawnX,
+                    sharedSpawnY));
         }
 
         // ✨ ÉRTESÍTJÜK, HOGY A JÁTÉK KEZDŐDIK
         broadcastTCPMessage("GAME_STARTING");
         System.out.println("📤 Broadcast GAME_STARTING to all players");
+    }
+
+    private void updateSharedSpawnFromSeed() {
+        if (sharedDungeonSeed == -1) {
+            return;
+        }
+
+        DungeonGenerator.SpawnLocation spawn = DungeonGenerator.computeSpawnLocation(sharedDungeonSeed, 32);
+        sharedSpawnX = spawn.getX();
+        sharedSpawnY = spawn.getY();
+
+        for (PlayerState state : gameState.getPlayerStates().values()) {
+            state.setX(sharedSpawnX);
+            state.setY(sharedSpawnY);
+        }
     }
 
     // ✨ JAVÍTOTT: TCP válasz küldése
@@ -1040,6 +1141,22 @@ public class MultiplayerGameServer {
                 sendTCPResponse(session.getClientSocket(), message);
             }
         }
+    }
+
+    private void handleGateTrigger(PlayerSession session, String gateData) {
+        if (gateData == null || gateData.isEmpty()) {
+            return;
+        }
+
+        broadcastTCPMessage("GATE_TRIGGER:" + gateData);
+    }
+
+    private void handleTileUpdate(PlayerSession session, String tileData) {
+        if (tileData == null || tileData.isEmpty()) {
+            return;
+        }
+
+        broadcastTCPMessage("TILE_UPDATE:" + tileData);
     }
 
     private void broadcastUDPToAll(String message) {

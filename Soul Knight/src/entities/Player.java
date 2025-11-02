@@ -13,12 +13,14 @@ import world.Tile;
 import world.Tile.TileType;
 import rendering.TextRenderer;
 
+import java.util.function.Consumer;
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL11.*;
 import java.nio.DoubleBuffer;
 import org.lwjgl.system.MemoryStack;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.function.Consumer;
 import java.awt.Font;
 import java.awt.Color;
 
@@ -78,6 +80,7 @@ public class Player extends Entity {
     private int gateAnimationPhase = -1;
     private static final long GATE_PHASE_DURATION_NANO = 200_000_000L;
     private List<Tile> currentAnimatingGateGroup = null;
+    private transient Consumer<List<Tile>> gateOpenListener;
 
 //    private float CRIT_CHANCE = 0.05f;
 //    private static final float CRIT_MULTIPLIER = 2.0f;
@@ -135,6 +138,10 @@ public class Player extends Entity {
             float newDamage = this.currentWeapon.getBaseDamage() * (1 + damageBoost);
             this.currentWeapon.setDamage(newDamage);
         }
+    }
+
+    public void setGateOpenListener(Consumer<List<Tile>> listener) {
+        this.gateOpenListener = listener;
     }
 
     public void setDungeon(Dungeon dungeon) {
@@ -248,6 +255,10 @@ public class Player extends Entity {
         this.gateAnimationPhase = 0;
     }
 
+    public void triggerGateAnimation(List<Tile> gateGroup) {
+        startGateAnimation(gateGroup);
+    }
+
     private void updateGateAnimation() {
         if (!isGateAnimating || currentAnimatingGateGroup == null) {
             return;
@@ -325,7 +336,11 @@ public class Player extends Entity {
             if (nearestInteractable != null && nearestInteractable.getType() == TileType.GATE) {
                 List<Tile> nearestGateGroup = getNearestGateGroup();
                 if (nearestGateGroup != null) {
-                    startGateAnimation(nearestGateGroup);
+                    if (gateOpenListener != null) {
+                        gateOpenListener.accept(nearestGateGroup);
+                    } else {
+                        startGateAnimation(nearestGateGroup);
+                    }
                 }
             }
         }
@@ -726,6 +741,32 @@ public class Player extends Entity {
     public void setTargetY(float targetY) {
         this.targetY = targetY;
         this.hasTargetPosition = true;
+    }
+
+    public void applyNetworkMovement(float newX, float newY, float deltaTime) {
+        float dx = newX - this.x;
+        float dy = newY - this.y;
+
+        this.x = newX;
+        this.y = newY;
+
+        boolean moving = Math.abs(dx) > 0.1f || Math.abs(dy) > 0.1f;
+        this.isWalking = moving;
+
+        if (moving) {
+            if (isAbilityActive && activeWalkSprite != null) {
+                activeWalkSprite.update(deltaTime);
+            } else if (walkSprite != null) {
+                walkSprite.update(deltaTime);
+            }
+        } else {
+            if (walkSprite != null) {
+                walkSprite.reset();
+            }
+            if (activeWalkSprite != null) {
+                activeWalkSprite.reset();
+            }
+        }
     }
 
     public float getTargetX() {
