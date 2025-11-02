@@ -22,6 +22,7 @@ public class MultiplayerClient {
     // ✨ ÚJ: Kapcsolati állapot
     private boolean connectionEstablished = false;
     private boolean waitingForPlayerId = true;
+    private boolean udpRegistered = false;
 
     public MultiplayerClient(String serverIp, int serverPort) {
         this.serverIp = serverIp;
@@ -38,6 +39,10 @@ public class MultiplayerClient {
         udpSocket = new DatagramSocket();
         connected = true;
         connectionEstablished = true;
+        waitingForPlayerId = true;
+        playerId = -1;
+        udpRegistered = false;
+        receivedMessages.clear();
 
         // ✨ ELŐBB indítsd a listener-eket, UTÁNA küldj bármit
         startTCPListener();
@@ -52,9 +57,8 @@ public class MultiplayerClient {
                 String message;
                 while (connected && (message = tcpIn.readLine()) != null) {
                     System.out.println("📨 TCP FROM SERVER: " + message);
-                    receivedMessages.offer(message);
 
-                    // ✨ FELDOLGOZZUK A SZERVER ÜZENETEKET
+                    // ✨ FELDOLGOZZUK A SZERVER ÜZENETEKET (a queue feltöltése is itt történik)
                     processServerMessage(message);
                 }
             } catch (IOException e) {
@@ -100,6 +104,17 @@ public class MultiplayerClient {
     // ✨ ÚJ: Szerver üzenetek feldolgozása
     private void processServerMessage(String message) {
         //System.out.println("📨 TCP FROM SERVER: " + message);
+
+        if (message == null || message.isEmpty()) {
+            return;
+        }
+
+        if (message.startsWith("PLAYER_ID:")) {
+            handlePlayerId(message.substring("PLAYER_ID:".length()));
+        } else if (message.startsWith("DUNGEON_SEED:")) {
+            handleDungeonSeed(message.substring("DUNGEON_SEED:".length()));
+        }
+
         receivedMessages.offer(message);
     }
 
@@ -166,6 +181,23 @@ public class MultiplayerClient {
         }
     }
 
+    public void sendPlayerDamage(String playerName, float damageAmount, float newHealth, boolean isAlive) {
+        if (!connected) {
+            return;
+        }
+
+        if (playerName == null || playerName.isEmpty()) {
+            playerName = String.valueOf(playerId);
+        }
+
+        String message = String.format(Locale.US, "PLAYER_DAMAGE:%s:%.2f:%.2f:%b",
+                playerName,
+                damageAmount,
+                newHealth,
+                isAlive);
+        sendTCPMessage(message);
+    }
+
     public void sendTCPMessage(String message) {
         if (connected && tcpOut != null) {
             tcpOut.println(message);
@@ -191,8 +223,9 @@ public class MultiplayerClient {
 
     // ✨ JAVÍTOTT: UDP regisztráció
     public void registerUDP() {
-        if (playerId != -1) {
+        if (!udpRegistered && playerId != -1 && udpSocket != null && !udpSocket.isClosed()) {
             sendTCPMessage("UDP_REGISTER:" + playerId + ":" + udpSocket.getLocalPort());
+            udpRegistered = true;
             //System.out.println("📡 UDP regisztrálva port: " + udpSocket.getLocalPort());
         }
     }
@@ -231,6 +264,9 @@ public class MultiplayerClient {
 
     public void setPlayerId(int playerId) {
         this.playerId = playerId;
+        if (playerId != -1) {
+            waitingForPlayerId = false;
+        }
     }
 
     public int getPlayerId() {
@@ -257,13 +293,20 @@ public class MultiplayerClient {
     public void disconnect() {
         if (!connected) return;
 
+        int previousPlayerId = this.playerId;
+
         connected = false;
         connectionEstablished = false;
 
+        waitingForPlayerId = true;
+        playerId = -1;
+        udpRegistered = false;
+        receivedMessages.clear();
+
         try {
             // ✨ KÜLDJÜK A DISCONNECT ÜZENETET
-            if (tcpOut != null) {
-                tcpOut.println("DISCONNECT:" + playerId);
+            if (tcpOut != null && previousPlayerId != -1) {
+                tcpOut.println("DISCONNECT:" + previousPlayerId);
             }
 
             if (tcpSocket != null && !tcpSocket.isClosed()) {

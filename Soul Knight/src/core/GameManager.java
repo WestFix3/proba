@@ -343,6 +343,8 @@ public class GameManager {
                 textRenderer
         );
 
+        setupPlayerDamageListener(player);
+
         for (Enemy enemy : currentDungeon.getEnemies()) {
             enemy.setTargetPlayer(this.player);
             enemy.setShowPathDebug(this.showPathDebug);
@@ -668,6 +670,11 @@ public class GameManager {
         try {
             //System.out.println("⏳ Waiting for player ID from server...");
 
+            if (multiplayerClient != null && multiplayerClient.isReadyForGame()) {
+                myPlayerId = multiplayerClient.getPlayerId();
+                return true;
+            }
+
             for (int i = 0; i < 50; i++) { // 5 másodperc
                 List<String> messages = multiplayerClient.getReceivedMessages();
                 for (String msg : messages) {
@@ -675,6 +682,7 @@ public class GameManager {
                     if (msg.startsWith("PLAYER_ID:")) {
                         myPlayerId = Integer.parseInt(msg.substring(10));
                         multiplayerClient.setPlayerId(myPlayerId);
+                        multiplayerClient.registerUDP();
                         //System.out.println("✅ Player ID received: " + myPlayerId);
                         return true;
                     }
@@ -832,6 +840,8 @@ public class GameManager {
                 50, 50, playerIdleTexture, window, weaponFactory, tileTextures.get(Tile.TileType.FLOOR),
                 textRenderer
         );
+
+        setupPlayerDamageListener(player);
 
         // ✨ JAVÍTÁS: Enemy beállításokat KÉSŐBB, amikor már van dungeon
         // for (Enemy enemy : currentDungeon.getEnemies()) { // ← EZT TÁVOLÍTSD EL!
@@ -1696,6 +1706,9 @@ public class GameManager {
                     //System.out.println("🎮 JÁTÉKOS AKCIÓ: " + data);
                     handlePlayerAction(playerId + ":" + data);
                     break;
+                case "PLAYER_DAMAGE":
+                    handlePlayerDamageUpdate(data);
+                    break;
                 default:
                     //System.out.println("❓ ISMERETLEN UDP COMMAND: " + command);
                     System.out.println("   Teljes üzenet: " + message);
@@ -1814,6 +1827,10 @@ public class GameManager {
                 handlePlayerAction(data);
                 break;
 
+            case "PLAYER_DAMAGE":
+                handlePlayerDamageUpdate(data);
+                break;
+
             case "PROJECTILE_CREATED":
                 handleProjectileCreated(data);
                 break;
@@ -1899,6 +1916,8 @@ public class GameManager {
                 tileTextures.get(Tile.TileType.FLOOR), textRenderer
         );
 
+        setupPlayerDamageListener(player);
+
         // ✨ FONTOS: Sprite-ok beállítása
         Sprite walkSprite = null;
         if (walkFrames != null && !walkFrames.isEmpty()) {
@@ -1935,6 +1954,33 @@ public class GameManager {
         //System.out.println("🔍 Camera set to follow player");
 
         //System.out.println("✅ Player initialized for multiplayer - COMPLETE");
+    }
+
+    private void setupPlayerDamageListener(Player player) {
+        if (player == null) {
+            return;
+        }
+
+        player.setDamageListener((damagedPlayer, damageAmount, newHealth, isAlive) -> {
+            if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected()) {
+                return;
+            }
+
+            sendPlayerDamageUpdate(damagedPlayer, damageAmount, newHealth, isAlive);
+        });
+    }
+
+    private void sendPlayerDamageUpdate(Player damagedPlayer, float damageAmount, float newHealth, boolean isAlive) {
+        if (damagedPlayer == null || multiplayerClient == null) {
+            return;
+        }
+
+        String damagedPlayerName = damagedPlayer.getName();
+        if (damagedPlayerName == null || damagedPlayerName.isEmpty()) {
+            damagedPlayerName = "Player" + myPlayerId;
+        }
+
+        multiplayerClient.sendPlayerDamage(damagedPlayerName, damageAmount, newHealth, isAlive);
     }
 
     private void generateDungeonWithSeed(long seed) {
@@ -2607,6 +2653,60 @@ public class GameManager {
                 }
             }
         }
+    }
+
+    private void handlePlayerDamageUpdate(String data) {
+        String[] parts = data.split(":");
+        if (parts.length < 4) {
+            System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
+            return;
+        }
+
+        try {
+            String damagedPlayerName = parts[0];
+            float damageAmount = Float.parseFloat(parts[1]);
+            float newHealth = Float.parseFloat(parts[2]);
+            boolean isAlive = Boolean.parseBoolean(parts[3]);
+
+            if (player != null && damagedPlayerName.equals(player.getName())) {
+                player.setHealth(newHealth);
+                if (!isAlive) {
+                    player.setAlive(false);
+                }
+            } else {
+                Player targetPlayer = findOtherPlayerByName(damagedPlayerName);
+                if (targetPlayer != null) {
+                    targetPlayer.setHealth(newHealth);
+                    if (!isAlive) {
+                        targetPlayer.setAlive(false);
+                    }
+                }
+            }
+
+            for (PlayerState playerState : serverPlayerStates.values()) {
+                if (damagedPlayerName.equals(playerState.getPlayerName())) {
+                    playerState.setHealth(newHealth);
+                    playerState.setAlive(isAlive);
+                    break;
+                }
+            }
+
+        } catch (NumberFormatException e) {
+            System.err.println("❌ Error parsing PLAYER_DAMAGE data: " + data);
+        }
+    }
+
+    private Player findOtherPlayerByName(String playerName) {
+        if (playerName == null) {
+            return null;
+        }
+
+        for (Player otherPlayer : otherPlayers.values()) {
+            if (playerName.equals(otherPlayer.getName())) {
+                return otherPlayer;
+            }
+        }
+        return null;
     }
 
     private void handleEnemyUpdate(String data) {

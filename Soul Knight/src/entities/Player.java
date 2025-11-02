@@ -561,6 +561,16 @@ public class Player extends Entity {
         return baseMoveSpeed;
     }
 
+    public interface DamageListener {
+        void onPlayerDamaged(Player player, float damageAmount, float newHealth, boolean isAlive);
+    }
+
+    private DamageListener damageListener;
+
+    public void setDamageListener(DamageListener damageListener) {
+        this.damageListener = damageListener;
+    }
+
     public void setMoveSpeed(float newSpeed) {
         this.moveSpeed = newSpeed;
     }
