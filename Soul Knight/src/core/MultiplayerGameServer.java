@@ -283,7 +283,7 @@ public class MultiplayerGameServer {
         }
     }
 
-    // MultiplayerGameServer.java
+    // MultiplayerGameServer.java - handlePlayerDamage metódus
     private void handlePlayerDamage(String data) {
         try {
             String[] parts = data.split(":");
@@ -300,42 +300,26 @@ public class MultiplayerGameServer {
                 damage = Float.parseFloat(parts[2]);
                 newHealth = Float.parseFloat(parts[3]);
                 isAlive = Boolean.parseBoolean(parts[4]);
-            } else if (parts.length == 4) { // Legacy fallback: no playerId sent
-                playerName = parts[0];
-                damage = Float.parseFloat(parts[1]);
-                newHealth = Float.parseFloat(parts[2]);
-                isAlive = Boolean.parseBoolean(parts[3]);
 
-                PlayerState legacyState = findPlayerStateByName(playerName);
-                playerId = legacyState != null ? legacyState.getPlayerId() : -1;
+                System.out.println("🩸 SERVER: Damage from player " + playerId +
+                        " - Health: " + newHealth + ", Alive: " + isAlive);
+
+                // ✨ FONTOS: MINDENKINEK KÜLDJÜK, BELEÉRVE A KÜLDŐT IS!
+                // NE szűrjük ki a saját üzeneteket!
+                String broadcastData = String.format(Locale.US, "%d:%s:%.2f:%.2f:%b",
+                        playerId,
+                        playerName,
+                        damage,
+                        newHealth,
+                        isAlive);
+
+                System.out.println("📤 SERVER: Broadcasting damage to ALL players: " + broadcastData);
+                broadcastUDPToAll("PLAYER_DAMAGE:" + broadcastData);
+
             } else {
                 System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
                 return;
             }
-
-            PlayerState playerState = playerId >= 0 ? gameState.getPlayerState(playerId) : null;
-            if (playerState == null && playerName != null) {
-                playerState = findPlayerStateByName(playerName);
-            }
-
-            if (playerState != null) {
-                playerState.setHealth(newHealth);
-                playerState.setAlive(isAlive);
-
-                if (playerName != null && !playerName.isEmpty()) {
-                    playerState.setPlayerName(playerName);
-                }
-                playerId = playerState.getPlayerId();
-            }
-
-            String broadcastData = String.format(Locale.US, "%d:%s:%.2f:%.2f:%b",
-                    playerId,
-                    playerName != null ? playerName : "",
-                    damage,
-                    newHealth,
-                    isAlive);
-
-            broadcastUDPToAll("PLAYER_DAMAGE:" + broadcastData);
 
         } catch (Exception e) {
             System.err.println("❌ Error handling player damage: " + e.getMessage());

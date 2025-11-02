@@ -1315,8 +1315,53 @@ public class GameManager {
             for (Enemy enemy : currentDungeon.getEnemies()) {
                 if (enemy.isAlive() && !enemy.isNetworkControlled()) {
                     Player closestPlayer = findClosestPlayerToEnemy(enemy);
-                    if (closestPlayer != null && closestPlayer != enemy.getTargetPlayer()) {
-                        enemy.setTargetPlayer(closestPlayer);
+
+                    // ✨ JAVÍTÁS: Ha nincs target VAGY a régi target meghalt VAGY közelebb van másik
+                    if (closestPlayer != null) {
+                        Player currentTarget = enemy.getTargetPlayer();
+                        boolean shouldChangeTarget =
+                                currentTarget == null ||
+                                        !currentTarget.isAlive() ||
+                                        closestPlayer != currentTarget;
+
+                        if (shouldChangeTarget) {
+                            enemy.setTargetPlayer(closestPlayer);
+                            System.out.println("🎯 Enemy " + enemy.getId() + " target: " + closestPlayer.getName() +
+                                    " (previous: " + (currentTarget != null ? currentTarget.getName() : "NULL") + ")");
+                        }
+                    }
+                }
+            }
+
+            // ✨ FONTOS: Frissítsd az ellenségeket, hogy mozogni tudjanak!
+            for (Enemy enemy : currentDungeon.getEnemies()) {
+                if (enemy.isAlive() && !enemy.isNetworkControlled()) {
+                    enemy.update(deltaTime); // ← EZ HIÁNYZIK!
+                }
+            }
+
+            for (Enemy enemy : currentDungeon.getEnemies()) {
+                if (enemy.isAlive()) {
+                    Player targetPlayer = enemy.getTargetPlayer();
+
+                    // ✨ JAVÍTÁS: Ha a target meghalt, keressünk újat
+                    if (targetPlayer != null && !targetPlayer.isAlive()) {
+                        Player newTarget = findClosestPlayerToEnemy(enemy);
+                        if (newTarget != null) {
+                            enemy.setTargetPlayer(newTarget);
+                            System.out.println("🔄 Enemy " + enemy.getId() + " target changed (dead): " + newTarget.getName());
+                            targetPlayer = newTarget;
+                        }
+                    }
+
+                    // Collision csak élő target-tel
+                    if (targetPlayer != null && targetPlayer.isAlive() &&
+                            collisionManager.checkCollision(targetPlayer, enemy)) {
+
+                        System.out.println("👹 ENEMY-TARGET COLLISION! EnemyID: " + enemy.getId() +
+                                ", Target: " + targetPlayer.getName() +
+                                ", Damage: " + enemy.getAttackDamage());
+                        targetPlayer.takeDamage(enemy.getAttackDamage());
                     }
                 }
             }
@@ -1456,7 +1501,9 @@ public class GameManager {
         Player closestPlayer = null;
         float closestDistance = Float.MAX_VALUE;
 
-        // Saját játékos
+        // ✨ CSAK élő játékosokat vegyünk figyelembe!
+
+        // Saját játékos - CSAK HA ÉL
         if (player != null && player.isAlive()) {
             float distance = calculateDistance(enemy.getX(), enemy.getY(),
                     player.getX(), player.getY());
@@ -1466,16 +1513,34 @@ public class GameManager {
             }
         }
 
-        // Egyéb játékosok
+        // Egyéb játékosok - CSAK HA ÉLNEK
         if (isMultiplayer) {
             for (Player otherPlayer : otherPlayers.values()) {
-                if (otherPlayer.isAlive()) {
+                if (otherPlayer != null && otherPlayer.isAlive()) { // ✨ FONTOS: null check + alive check
                     float distance = calculateDistance(enemy.getX(), enemy.getY(),
                             otherPlayer.getX(), otherPlayer.getY());
                     if (distance < closestDistance) {
                         closestDistance = distance;
                         closestPlayer = otherPlayer;
                     }
+                }
+            }
+        }
+
+        // ✨ DEBUG: Nézzük meg, mit talált
+        if (closestPlayer != null) {
+            System.out.println("🔍 Enemy " + enemy.getId() + " closest LIVING player: " +
+                    closestPlayer.getName() + " (distance: " + closestDistance + ")");
+        } else {
+            System.out.println("🔍 Enemy " + enemy.getId() + " - NO LIVING PLAYERS FOUND!");
+
+            // ✨ További debug: nézzük meg az összes játékos állapotát
+            System.out.println("   - Main player: " + (player != null ?
+                    player.getName() + " (alive: " + player.isAlive() + ")" : "NULL"));
+
+            if (isMultiplayer) {
+                for (Player p : otherPlayers.values()) {
+                    System.out.println("   - Other player: " + p.getName() + " (alive: " + p.isAlive() + ")");
                 }
             }
         }
@@ -1956,18 +2021,37 @@ public class GameManager {
         //System.out.println("✅ Player initialized for multiplayer - COMPLETE");
     }
 
+    // GameManager.java - setupPlayerDamageListener
     private void setupPlayerDamageListener(Player player) {
         if (player == null) {
+            System.err.println("❌ Cannot setup damage listener - player is null");
             return;
         }
 
         player.setDamageListener((damagedPlayer, damageAmount, newHealth, isAlive) -> {
-            if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected()) {
-                return;
+            System.out.println("💥 LOCAL DAMAGE LISTENER: " + damageAmount +
+                    " damage, Health: " + newHealth + ", Alive: " + isAlive);
+
+            // ✨ FONTOS: AZONNALI LOKÁLIS FRISSÍTÉS - ez hiányzik!
+            damagedPlayer.setHealth(newHealth);
+            damagedPlayer.setAlive(isAlive);
+
+            // ✨ Health bar frissítése
+            System.out.println("❤️  SAJÁT ÉLETERŐ FRISSÍTVE LOKÁLISAN: " + newHealth + " HP");
+
+            if (!isAlive) {
+                System.out.println("💀 PLAYER DIED - Switching to GAME_OVER");
+                currentState = GameState.GAME_OVER;
             }
 
-            sendPlayerDamageUpdate(damagedPlayer, damageAmount, newHealth, isAlive);
+            // Küldés a szervernek
+            if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                System.out.println("📤 SENDING DAMAGE TO SERVER: " + damageAmount + " damage");
+                sendPlayerDamageUpdate(damagedPlayer, damageAmount, newHealth, isAlive);
+            }
         });
+
+        System.out.println("✅ Damage listener setup complete");
     }
 
     private void sendPlayerDamageUpdate(Player damagedPlayer, float damageAmount, float newHealth, boolean isAlive) {
@@ -2665,74 +2749,54 @@ public class GameManager {
     }
 
     private void handlePlayerDamageUpdate(String data) {
-        String[] parts = data.split(":");
-        if (parts.length < 4) {
-            System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
-            return;
-        }
-
         try {
-            int damagedPlayerId = -1;
-            String damagedPlayerName;
-            float newHealth;
-            boolean isAlive;
-
-            if (parts.length >= 5) {
-                damagedPlayerId = Integer.parseInt(parts[0]);
-                damagedPlayerName = parts[1];
-                Float.parseFloat(parts[2]); // Damage amount already processed server-side
-                newHealth = Float.parseFloat(parts[3]);
-                isAlive = Boolean.parseBoolean(parts[4]);
-            } else { // Legacy format without playerId
-                damagedPlayerName = parts[0];
-                Float.parseFloat(parts[1]); // Damage amount already processed server-side
-                newHealth = Float.parseFloat(parts[2]);
-                isAlive = Boolean.parseBoolean(parts[3]);
-
-                PlayerState legacyState = findPlayerStateByName(damagedPlayerName);
-                if (legacyState != null) {
-                    damagedPlayerId = legacyState.getPlayerId();
-                }
+            String[] parts = data.split(":");
+            if (parts.length < 5) {
+                System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
+                return;
             }
 
-            if (player != null && damagedPlayerId == myPlayerId) {
-                player.setHealth(newHealth);
-                if (!isAlive) {
-                    player.setAlive(false);
+            int damagedPlayerId = Integer.parseInt(parts[0]);
+            String damagedPlayerName = parts[1];
+            float damageAmount = Float.parseFloat(parts[2]);
+            float newHealth = Float.parseFloat(parts[3]);
+            boolean isAlive = Boolean.parseBoolean(parts[4]);
+
+            // ✨ FONTOS: MINDEN damage üzenetet dolgozz fel, még a sajátodat is!
+            System.out.println("🩸 CLIENT: Damage update - PlayerID: " + damagedPlayerId +
+                    ", MyID: " + myPlayerId + ", Health: " + newHealth + ", Alive: " + isAlive);
+
+            // ✨ SAJÁT JÁTÉKOS SEBZÉSE
+            if (damagedPlayerId == myPlayerId) {
+                System.out.println("💥 SAJÁT SEBZÉS FRISSÍTÉS: " + newHealth + " HP");
+
+                if (player != null) {
+                    player.setHealth(newHealth);
+                    player.setAlive(isAlive);
+
+                    if (!isAlive) {
+                        System.out.println("💀 SAJÁT JÁTÉKOS MEGHALT A DAMAGE UPDATE-BEN!");
+                        currentState = GameState.GAME_OVER;
+                    }
                 }
-            } else {
-                Player targetPlayer = damagedPlayerId >= 0 ? otherPlayers.get(damagedPlayerId) : null;
+            }
+            // ✨ MÁSIK JÁTÉKOS SEBZÉSE
+            else {
+                Player targetPlayer = otherPlayers.get(damagedPlayerId);
                 if (targetPlayer == null) {
                     targetPlayer = findOtherPlayerByName(damagedPlayerName);
                 }
 
                 if (targetPlayer != null) {
                     targetPlayer.setHealth(newHealth);
-                    if (!isAlive) {
-                        targetPlayer.setAlive(false);
-                    }
+                    targetPlayer.setAlive(isAlive);
+                    System.out.println("👥 MÁSIK JÁTÉKOS SEBZÉSE: " + damagedPlayerName + " - " + newHealth + " HP");
                 }
             }
 
-            if (damagedPlayerId >= 0) {
-                PlayerState playerState = serverPlayerStates.get(damagedPlayerId);
-                if (playerState != null) {
-                    playerState.setHealth(newHealth);
-                    playerState.setAlive(isAlive);
-                    if (damagedPlayerName != null && !damagedPlayerName.isEmpty()) {
-                        playerState.setPlayerName(damagedPlayerName);
-                    }
-                }
-            } else {
-                PlayerState playerState = findPlayerStateByName(damagedPlayerName);
-                if (playerState != null) {
-                    playerState.setHealth(newHealth);
-                    playerState.setAlive(isAlive);
-                }
-            }
-
-        } catch (NumberFormatException e) {
-            System.err.println("❌ Error parsing PLAYER_DAMAGE data: " + data);
+        } catch (Exception e) {
+            System.err.println("❌ Error in handlePlayerDamageUpdate: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
