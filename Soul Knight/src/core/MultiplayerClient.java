@@ -181,16 +181,23 @@ public class MultiplayerClient {
         }
     }
 
-    public void sendPlayerDamage(String playerName, float damageAmount, float newHealth, boolean isAlive) {
+    public void sendPlayerDamage(int playerId, String playerName, float damageAmount, float newHealth, boolean isAlive) {
         if (!connected) {
             return;
         }
+
+        if (playerId < 0) {
+            System.err.println("❌ Cannot send PLAYER_DAMAGE without a valid playerId");
+            return;
+        }
+
 
         if (playerName == null || playerName.isEmpty()) {
             playerName = String.valueOf(playerId);
         }
 
-        String message = String.format(Locale.US, "PLAYER_DAMAGE:%s:%.2f:%.2f:%b",
+        String message = String.format(Locale.US, "PLAYER_DAMAGE:%d:%s:%.2f:%.2f:%b",
+                playerId,
                 playerName,
                 damageAmount,
                 newHealth,

@@ -544,8 +544,16 @@ public class Player extends Entity {
 
         if (effectiveDamage > 0) {
             this.health -= effectiveDamage;
+            if (this.health < 0) {
+                this.health = 0;
+            }
+
             this.showHitIndicator = true;
             this.hitIndicatorTime = 0.0f;
+
+            if (damageListener != null) {
+                damageListener.onPlayerDamaged(this, effectiveDamage, this.health, this.health > 0);
+            }
         }
 
         if (this.health <= 0) {

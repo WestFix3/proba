@@ -1971,16 +1971,25 @@ public class GameManager {
     }
 
     private void sendPlayerDamageUpdate(Player damagedPlayer, float damageAmount, float newHealth, boolean isAlive) {
-        if (damagedPlayer == null || multiplayerClient == null) {
+        if (multiplayerClient == null) {
             return;
         }
 
-        String damagedPlayerName = damagedPlayer.getName();
-        if (damagedPlayerName == null || damagedPlayerName.isEmpty()) {
-            damagedPlayerName = "Player" + myPlayerId;
+        int damagedPlayerId = myPlayerId;
+        String damagedPlayerName = null;
+
+        if (damagedPlayer != null) {
+            damagedPlayerName = damagedPlayer.getName();
+            if (damagedPlayer.getId() >= 0) {
+                damagedPlayerId = damagedPlayer.getId();
+            }
         }
 
-        multiplayerClient.sendPlayerDamage(damagedPlayerName, damageAmount, newHealth, isAlive);
+        if (damagedPlayerName == null || damagedPlayerName.isEmpty()) {
+            damagedPlayerName = "Player" + damagedPlayerId;
+        }
+
+        multiplayerClient.sendPlayerDamage(damagedPlayerId, damagedPlayerName, damageAmount, newHealth, isAlive);
     }
 
     private void generateDungeonWithSeed(long seed) {
@@ -2663,18 +2672,40 @@ public class GameManager {
         }
 
         try {
-            String damagedPlayerName = parts[0];
-            float damageAmount = Float.parseFloat(parts[1]);
-            float newHealth = Float.parseFloat(parts[2]);
-            boolean isAlive = Boolean.parseBoolean(parts[3]);
+            int damagedPlayerId = -1;
+            String damagedPlayerName;
+            float newHealth;
+            boolean isAlive;
 
-            if (player != null && damagedPlayerName.equals(player.getName())) {
+            if (parts.length >= 5) {
+                damagedPlayerId = Integer.parseInt(parts[0]);
+                damagedPlayerName = parts[1];
+                Float.parseFloat(parts[2]); // Damage amount already processed server-side
+                newHealth = Float.parseFloat(parts[3]);
+                isAlive = Boolean.parseBoolean(parts[4]);
+            } else { // Legacy format without playerId
+                damagedPlayerName = parts[0];
+                Float.parseFloat(parts[1]); // Damage amount already processed server-side
+                newHealth = Float.parseFloat(parts[2]);
+                isAlive = Boolean.parseBoolean(parts[3]);
+
+                PlayerState legacyState = findPlayerStateByName(damagedPlayerName);
+                if (legacyState != null) {
+                    damagedPlayerId = legacyState.getPlayerId();
+                }
+            }
+
+            if (player != null && damagedPlayerId == myPlayerId) {
                 player.setHealth(newHealth);
                 if (!isAlive) {
                     player.setAlive(false);
                 }
             } else {
-                Player targetPlayer = findOtherPlayerByName(damagedPlayerName);
+                Player targetPlayer = damagedPlayerId >= 0 ? otherPlayers.get(damagedPlayerId) : null;
+                if (targetPlayer == null) {
+                    targetPlayer = findOtherPlayerByName(damagedPlayerName);
+                }
+
                 if (targetPlayer != null) {
                     targetPlayer.setHealth(newHealth);
                     if (!isAlive) {
@@ -2683,17 +2714,40 @@ public class GameManager {
                 }
             }
 
-            for (PlayerState playerState : serverPlayerStates.values()) {
-                if (damagedPlayerName.equals(playerState.getPlayerName())) {
+            if (damagedPlayerId >= 0) {
+                PlayerState playerState = serverPlayerStates.get(damagedPlayerId);
+                if (playerState != null) {
                     playerState.setHealth(newHealth);
                     playerState.setAlive(isAlive);
-                    break;
+                    if (damagedPlayerName != null && !damagedPlayerName.isEmpty()) {
+                        playerState.setPlayerName(damagedPlayerName);
+                    }
+                }
+            } else {
+                PlayerState playerState = findPlayerStateByName(damagedPlayerName);
+                if (playerState != null) {
+                    playerState.setHealth(newHealth);
+                    playerState.setAlive(isAlive);
                 }
             }
 
         } catch (NumberFormatException e) {
             System.err.println("❌ Error parsing PLAYER_DAMAGE data: " + data);
         }
+    }
+
+    private PlayerState findPlayerStateByName(String playerName) {
+        if (playerName == null) {
+            return null;
+        }
+
+        for (PlayerState playerState : serverPlayerStates.values()) {
+            if (playerName.equals(playerState.getPlayerName())) {
+                return playerState;
+            }
+        }
+
+        return null;
     }
 
     private Player findOtherPlayerByName(String playerName) {
