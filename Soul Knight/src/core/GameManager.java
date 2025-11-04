@@ -2844,7 +2844,8 @@ public class GameManager {
 
         float newX = playerState.getX();
         float newY = playerState.getY();
-        otherPlayer.applyNetworkMovement(newX, newY, deltaTime);
+        otherPlayer.setTargetX(newX);
+        otherPlayer.setTargetY(newY);
 
         // Ha nagyon eltér a jelenlegi pozíciótól, azonnal ugorjunk a legfrissebb állapotra,
         // így a későbbi interpoláció simán tudja követni a mozgást.
@@ -4239,6 +4240,17 @@ public class GameManager {
         enemySpeedMultiplier *= 1.05f;
         enemyPathDeviationChance = Math.max(0.05f, enemyPathDeviationChance * 0.9f);
         enemyPathDeviationRadius = Math.max(0.5f, enemyPathDeviationRadius * 0.9f);
+    }
+
+    private void applyDifficultyToEnemies() {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        for (Enemy enemy : currentDungeon.getEnemies()) {
+            enemy.applyDifficultyMultipliers(enemyDamageMultiplier, enemySpeedMultiplier);
+            enemy.setPathDeviation(enemyPathDeviationChance, enemyPathDeviationRadius);
+        }
     }
 
     private void checkEffectCollision() {

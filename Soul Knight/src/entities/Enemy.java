@@ -983,6 +983,19 @@ public class Enemy extends Entity {
         this.targetY = y;
     }
 
+    public boolean isCritIndicatorActive() {
+        return showCritIndicator && critIndicatorTime < CRIT_DISPLAY_DURATION;
+    }
+
+    public void syncCritIndicator(boolean active) {
+        if (active) {
+            setCritIndicator();
+        } else {
+            this.showCritIndicator = false;
+            this.critIndicatorTime = 0.0f;
+        }
+    }
+
     public Player getTargetPlayer() {
         return this.targetPlayer;
     }
