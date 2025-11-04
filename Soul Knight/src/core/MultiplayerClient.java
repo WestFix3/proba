@@ -265,6 +265,11 @@ public class MultiplayerClient {
         sendTCPMessage(message);
     }
 
+    public void sendProjectileRemoved(int projectileId) {
+        String message = "PROJECTILE_REMOVED:" + projectileId;
+        sendTCPMessage(message);
+    }
+
     public boolean hasMessages() {
         return !receivedMessages.isEmpty();
     }

@@ -65,6 +65,8 @@ public class Player extends Entity {
     private boolean isWalking = false;
     private boolean isAttacking = false;
     private boolean isAbilityActive = false;
+    private float networkWalkHoldTime = 0f;
+    private static final float NETWORK_WALK_HOLD_DURATION = 0.2f;
 
     private WeaponFactory weaponFactory;
     private String currentWeaponId;
@@ -714,11 +716,16 @@ public class Player extends Entity {
     }
 
     public void setHealth(float health){
-        this.health = health;
+        float clampedHealth = Math.max(0f, Math.min(health, maxHealth));
+        this.health = clampedHealth;
+        if (this.health <= 0f) {
+            this.isWalking = false;
+        }
     }
 
     public void setMaxHealth(float maxHealth){
-        this.health = maxHealth;
+        this.maxHealth = maxHealth;
+        this.health = Math.min(this.health, maxHealth);
     }
 
     public void setDamageBoost(float damageBoost){
@@ -750,14 +757,31 @@ public class Player extends Entity {
         this.x = newX;
         this.y = newY;
 
+        if (hasTargetPosition && Math.abs(targetX - newX) <= 0.5f && Math.abs(targetY - newY) <= 0.5f) {
+            this.x = targetX;
+            this.y = targetY;
+            this.hasTargetPosition = false;
+            dx = 0f;
+            dy = 0f;
+        }
+
+        float animationDelta = deltaTime > 0f ? deltaTime : (1f / 60f);
         boolean moving = Math.abs(dx) > 0.1f || Math.abs(dy) > 0.1f;
+
+        if (moving) {
+            networkWalkHoldTime = NETWORK_WALK_HOLD_DURATION;
+        } else if (networkWalkHoldTime > 0f) {
+            networkWalkHoldTime = Math.max(0f, networkWalkHoldTime - animationDelta);
+            moving = true;
+        }
+
         this.isWalking = moving;
 
         if (moving) {
             if (isAbilityActive && activeWalkSprite != null) {
-                activeWalkSprite.update(deltaTime);
+                activeWalkSprite.update(animationDelta);
             } else if (walkSprite != null) {
-                walkSprite.update(deltaTime);
+                walkSprite.update(animationDelta);
             }
         } else {
             if (walkSprite != null) {

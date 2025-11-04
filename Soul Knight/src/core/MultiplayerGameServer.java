@@ -215,6 +215,9 @@ public class MultiplayerGameServer {
             case "PROJECTILE_CREATE":
                 handleProjectileCreate(session, data);
                 break;
+            case "PROJECTILE_REMOVED":
+                handleProjectileRemoved(session, data);
+                break;
             case "JOIN_GAME":
                 handlePlayerJoin(session, data);
                 break;
@@ -335,8 +338,19 @@ public class MultiplayerGameServer {
                         newHealth,
                         isAlive);
 
+                PlayerState playerState = gameState.getPlayerState(playerId);
+                if (playerState != null) {
+                    playerState.setHealth(newHealth);
+                    playerState.setAlive(isAlive);
+                }
+
                 System.out.println("📤 SERVER: Broadcasting damage to ALL players: " + broadcastData);
-                broadcastUDPToAll("PLAYER_DAMAGE:" + broadcastData);
+                String fullMessage = "PLAYER_DAMAGE:" + broadcastData;
+                broadcastTCPMessage(fullMessage);
+
+                if (!isAlive) {
+                    broadcastTCPMessage("PLAYER_ELIMINATED:" + playerId);
+                }
 
             } else {
                 System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
@@ -1152,11 +1166,28 @@ public class MultiplayerGameServer {
     }
 
     private void handleTileUpdate(PlayerSession session, String tileData) {
-        if (tileData == null || tileData.isEmpty()) {
+        if (tileData == null || tileData.isEmpty() || session == null || !session.isHost()) {
             return;
         }
 
         broadcastTCPMessage("TILE_UPDATE:" + tileData);
+    }
+
+    private void handleProjectileRemoved(PlayerSession session, String data) {
+        if (!session.isHost()) {
+            return;
+        }
+
+        try {
+            int projectileId = Integer.parseInt(data.trim());
+            ProjectileState removed = activeProjectiles.remove(projectileId);
+            if (removed != null) {
+                removed.setActive(false);
+                broadcastUDPToAll("PROJECTILE_REMOVED:" + projectileId);
+            }
+        } catch (NumberFormatException e) {
+            System.err.println("❌ Invalid PROJECTILE_REMOVED data: " + data);
+        }
     }
 
     private void broadcastUDPToAll(String message) {

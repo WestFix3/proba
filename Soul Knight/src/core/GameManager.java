@@ -74,6 +74,7 @@ public class GameManager {
     private Map<Integer, Player> otherPlayers = new HashMap<>();
     private Map<Integer, PlayerState> serverPlayerStates = new HashMap<>();
     private Set<String> processedGateEvents = new HashSet<>();
+    private final Set<String> pendingGateTriggers = new LinkedHashSet<>();
 
     // Interpolációhoz
     private float interpolationSpeed = 5.0f;
@@ -135,6 +136,7 @@ public class GameManager {
     private int frameCounter = 0;
     private Map<Integer, Projectile> syncedProjectiles = new HashMap<>();
     private Map<Integer, Float> lastEnemyPositions = new HashMap<>();
+    private final List<Projectile> pendingProjectileRemovals = new ArrayList<>();
 
     // Setter a path debug beállításhoz
     public void setShowPathDebug(boolean showPathDebug) {
@@ -391,6 +393,8 @@ public class GameManager {
         collisionManager = new CollisionManager(currentDungeon);
 
         projectiles = new ArrayList<>();
+        pendingProjectileRemovals.clear();
+        pendingProjectileRemovals.clear();
         effects = new ArrayList<>();
         playerEffects = new ArrayList<>();
 
@@ -585,6 +589,7 @@ public class GameManager {
         // Inicializáld a listákat
         if (projectiles == null) {
             projectiles = new ArrayList<>();
+            pendingProjectileRemovals.clear();
         }
         if (effects == null) {
             effects = new ArrayList<>();
@@ -973,6 +978,7 @@ public class GameManager {
         advanceDifficultyScaling();
         cleanupForNextLevel();
         projectiles.clear();
+        pendingProjectileRemovals.clear();
         if (effects != null) {
             effects.clear();
         } else {
@@ -984,6 +990,7 @@ public class GameManager {
             playerEffects = new ArrayList<>();
         }
         processedGateEvents.clear();
+        pendingGateTriggers.clear();
 
         if (activeEffectsById == null) {
             activeEffectsById = new HashMap<>();
@@ -991,7 +998,6 @@ public class GameManager {
             activeEffectsById.clear();
         }
         nextEffectId = 1;
-        processedGateEvents.clear();
 
         weaponFactory.loadWeaponSprites();
 
@@ -1362,6 +1368,8 @@ public class GameManager {
             return;
         }
 
+        processPendingGateTriggers();
+
         // Player update - UGYANAZ
         player.update(deltaTime, inputHandler, collisionManager, currentTime);
 
@@ -1492,6 +1500,8 @@ public class GameManager {
             projectile.update(deltaTime);
 
             boolean hitSomething = false;
+            boolean environmentCollision = false;
+            boolean canAffectEnvironment = !isMultiplayer || isHost;
             int tileSize = currentDungeon.getTileSize();
 
             int projGridX = (int) (projectile.getX() / tileSize);
@@ -1508,7 +1518,7 @@ public class GameManager {
                     if (tile != null && tile.isSolid()) {
                         if (collisionManager.checkTileCollision(projectile, tile, x, y)) {
                             projectile.setAlive(false);
-                            if (tile.getType() == Tile.TileType.BOX) {
+                            if (canAffectEnvironment && tile.getType() == Tile.TileType.BOX) {
                                 tile.takeDamage(1);
                                 boolean destroyed = tile.isDestroyed();
                                 if (destroyed) {
@@ -1524,6 +1534,7 @@ public class GameManager {
                                 sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
                             }
                             hitSomething = true;
+                            environmentCollision = true;
                             break;
                         }
                     }
@@ -1531,10 +1542,27 @@ public class GameManager {
                 if (hitSomething) break;
             }
 
+            if (hitSomething) {
+                if (!projectile.isAlive()) {
+                    if (projectile.getId() >= 0) {
+                        syncedProjectiles.remove(projectile.getId());
+                        if (environmentCollision) {
+                            notifyServerProjectileRemoval(projectile.getId());
+                        }
+                    } else if (environmentCollision && isMultiplayer && isHost) {
+                        pendingProjectileRemovals.add(projectile);
+                    }
+                    projectileIterator.remove();
+                }
+                continue;
+            }
+
             for (Enemy enemy : currentDungeon.getEnemies()) {
                 if (enemy.isAlive() && collisionManager.checkCollision(projectile, enemy)) {
-                    float finalDamage = player.calculateFinalDamage(projectile.getDamage(), enemy);
-                    enemy.takeDamage(finalDamage);
+                    if (!isMultiplayer || isHost) {
+                        float finalDamage = player.calculateFinalDamage(projectile.getDamage(), enemy);
+                        enemy.takeDamage(finalDamage);
+                    }
                     projectile.setAlive(false);
                     hitSomething = true;
                     break;
@@ -1542,6 +1570,9 @@ public class GameManager {
             }
 
             if (!projectile.isAlive()) {
+                if (projectile.getId() >= 0) {
+                    syncedProjectiles.remove(projectile.getId());
+                }
                 projectileIterator.remove();
             }
         }
@@ -1628,24 +1659,16 @@ public class GameManager {
             return;
         }
 
-        Player deadPlayer;
-        if (deadPlayerId == myPlayerId || deadPlayerId < 0) {
-            deadPlayer = player;
-        } else {
-            deadPlayer = otherPlayers.get(deadPlayerId);
-        }
-
         for (Enemy enemy : currentDungeon.getEnemies()) {
             if (!enemy.isAlive()) {
                 continue;
             }
 
-            Player currentTarget = enemy.getTargetPlayer();
-            if (currentTarget == null || currentTarget == deadPlayer || !currentTarget.isAlive()) {
-                Player newTarget = findClosestPlayerToEnemy(enemy);
-                if (newTarget != null && newTarget.isAlive()) {
-                    enemy.setTargetPlayer(newTarget);
-                }
+            Player newTarget = findClosestPlayerToEnemy(enemy);
+            if (newTarget != null && newTarget.isAlive()) {
+                enemy.setTargetPlayer(newTarget);
+            } else {
+                enemy.setTargetPlayer(null);
             }
         }
     }
@@ -1875,6 +1898,9 @@ public class GameManager {
                 case "PLAYER_DAMAGE":
                     handlePlayerDamageUpdate(data);
                     break;
+                case "PLAYER_ELIMINATED":
+                    handlePlayerEliminated(data);
+                    break;
                 default:
                     //System.out.println("❓ ISMERETLEN UDP COMMAND: " + command);
                     System.out.println("   Teljes üzenet: " + message);
@@ -1998,6 +2024,10 @@ public class GameManager {
 
             case "PLAYER_DAMAGE":
                 handlePlayerDamageUpdate(data);
+                break;
+
+            case "PLAYER_ELIMINATED":
+                handlePlayerEliminated(data);
                 break;
 
             case "EFFECT_SPAWN":
@@ -2228,6 +2258,11 @@ public class GameManager {
             return;
         }
 
+        if (player == null || currentDungeon == null) {
+            pendingGateTriggers.add(gateData);
+            return;
+        }
+
         if (processedGateEvents.contains(gateData)) {
             return;
         }
@@ -2235,8 +2270,30 @@ public class GameManager {
         List<Tile> gateGroup = findGateGroupByEventKey(gateData);
         if (gateGroup != null) {
             processedGateEvents.add(gateData);
-            if (player != null) {
+            player.triggerGateAnimation(gateGroup);
+        } else {
+            pendingGateTriggers.add(gateData);
+        }
+    }
+
+    private void processPendingGateTriggers() {
+        if (pendingGateTriggers.isEmpty() || player == null || currentDungeon == null) {
+            return;
+        }
+
+        Iterator<String> iterator = pendingGateTriggers.iterator();
+        while (iterator.hasNext()) {
+            String gateData = iterator.next();
+            if (processedGateEvents.contains(gateData)) {
+                iterator.remove();
+                continue;
+            }
+
+            List<Tile> gateGroup = findGateGroupByEventKey(gateData);
+            if (gateGroup != null) {
+                processedGateEvents.add(gateData);
                 player.triggerGateAnimation(gateGroup);
+                iterator.remove();
             }
         }
     }
@@ -2278,7 +2335,7 @@ public class GameManager {
     }
 
     private void sendTileStateUpdate(int gridX, int gridY, float health, boolean destroyed) {
-        if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected()) {
+        if (!isMultiplayer || !isHost || multiplayerClient == null || !multiplayerClient.isConnected()) {
             return;
         }
 
@@ -2380,6 +2437,7 @@ public class GameManager {
                     teleportPadTexture
             );
             processedGateEvents.clear();
+            pendingGateTriggers.clear();
 
             applyDifficultyToEnemies();
 
@@ -2402,6 +2460,8 @@ public class GameManager {
 
             // Collision manager
             collisionManager = new CollisionManager(currentDungeon);
+
+            processPendingGateTriggers();
 
             // ✨ FONTOS: Kamera beállítása a player-re
             int dungeonWidthPixels = currentDungeon.getWidthTiles() * currentDungeon.getTileSize();
@@ -2633,9 +2693,9 @@ public class GameManager {
                 return;
             }
 
-            // Ha a lövedék a saját játékosunké, akkor már lokálisan is létrehoztuk
+            // Ha a lövedék a saját játékosunké, akkor keressük meg a lokális példányt és adjuk hozzá az ID-t
             if (projectileState.getOwnerPlayerId() == myPlayerId) {
-                System.out.println("🔒 Own projectile - already handled locally");
+                attachProjectileIdToLocalInstance(projectileState);
                 return;
             }
 
@@ -2683,6 +2743,50 @@ public class GameManager {
 
 //        System.out.println("✅ Synced projectile created: ID=" + projectileState.getProjectileId() +
 //                " from player " + owner.getName());
+    }
+
+    private void attachProjectileIdToLocalInstance(ProjectileState projectileState) {
+        if (projectiles == null || projectileState == null) {
+            return;
+        }
+
+        Projectile closest = null;
+        float closestDistance = Float.MAX_VALUE;
+        for (Projectile projectile : projectiles) {
+            if (projectile.getOwner() == player && projectile.getId() < 0) {
+                float dx = projectile.getX() - projectileState.getX();
+                float dy = projectile.getY() - projectileState.getY();
+                float distance = dx * dx + dy * dy;
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closest = projectile;
+                }
+            }
+        }
+
+        if (closest != null && closestDistance < 400f) { // ~20 px tolerance
+            closest.setId(projectileState.getProjectileId());
+            syncedProjectiles.put(projectileState.getProjectileId(), closest);
+            return;
+        }
+
+        Projectile pendingClosest = null;
+        float pendingDistance = Float.MAX_VALUE;
+        for (Projectile projectile : pendingProjectileRemovals) {
+            float dx = projectile.getX() - projectileState.getX();
+            float dy = projectile.getY() - projectileState.getY();
+            float distance = dx * dx + dy * dy;
+            if (distance < pendingDistance) {
+                pendingDistance = distance;
+                pendingClosest = projectile;
+            }
+        }
+
+        if (pendingClosest != null && pendingDistance < 400f) {
+            pendingClosest.setId(projectileState.getProjectileId());
+            pendingProjectileRemovals.remove(pendingClosest);
+            notifyServerProjectileRemoval(projectileState.getProjectileId());
+        }
     }
 
     private void createSyncedProjectile(int projectileId, float x, float y,
@@ -2875,8 +2979,7 @@ public class GameManager {
                 float newX = currentX + (targetX - currentX) * 10.0f * deltaTime;
                 float newY = currentY + (targetY - currentY) * 10.0f * deltaTime;
 
-                otherPlayer.setX(newX);
-                otherPlayer.setY(newY);
+                otherPlayer.applyNetworkMovement(newX, newY, deltaTime);
             }
         }
     }
@@ -3132,6 +3235,18 @@ public class GameManager {
         }
     }
 
+    private void handlePlayerEliminated(String data) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        try {
+            int eliminatedPlayerId = Integer.parseInt(data.trim());
+            forceEnemyRetarget(eliminatedPlayerId);
+        } catch (NumberFormatException ignored) {
+        }
+    }
+
     private void handleEffectSpawnMessage(String data) {
         if (data == null || data.isEmpty()) {
             return;
@@ -3346,35 +3461,70 @@ public class GameManager {
     }
 
     private void updateEnemiesFromServer(String enemiesData) {
-        String[] enemyEntries = enemiesData.split("\\|");
-        for (String entry : enemyEntries) {
-            if (!entry.isEmpty()) {
-                String[] parts = entry.split(":");
-                if (parts.length >= 5) {
-                    int enemyId = Integer.parseInt(parts[0]);
-                    float x = Float.parseFloat(parts[1]);
-                    float y = Float.parseFloat(parts[2]);
-                    float health = Float.parseFloat(parts[3]);
-                    boolean isAlive = Boolean.parseBoolean(parts[4]);
+        if (currentDungeon == null || enemiesData == null || enemiesData.isEmpty()) {
+            return;
+        }
 
-                    for (Enemy enemy : currentDungeon.getEnemies()) {
-                        if (enemy.getId() == enemyId) {
-                            enemy.setX(x);
-                            enemy.setY(y);
-                            enemy.setHealth(health);
-                            enemy.setAlive(isAlive);
-                            //System.out.println("👹 Enemy synced from server: ID=" + enemyId + ", x=" + x + ", y=" + y);
-                            break;
-                        }
+        String[] enemyEntries = enemiesData.split("\\|");
+        Set<Integer> deadEnemyIds = new HashSet<>();
+        Set<Integer> seenEnemyIds = new HashSet<>();
+
+        for (String entry : enemyEntries) {
+            if (entry == null || entry.isEmpty()) {
+                continue;
+            }
+
+            String[] parts = entry.contains(",") ? entry.split(",") : entry.split(":");
+            if (parts.length < 5) {
+                continue;
+            }
+
+            try {
+                int enemyId = Integer.parseInt(parts[0]);
+                float x = Float.parseFloat(parts[1]);
+                float y = Float.parseFloat(parts[2]);
+                float health = Float.parseFloat(parts[3]);
+                boolean isAlive = Boolean.parseBoolean(parts[4]);
+
+                seenEnemyIds.add(enemyId);
+                if (!isAlive) {
+                    deadEnemyIds.add(enemyId);
+                }
+
+                Enemy targetEnemy = null;
+                for (Enemy enemy : currentDungeon.getEnemies()) {
+                    if (enemy.getId() == enemyId) {
+                        targetEnemy = enemy;
+                        break;
                     }
                 }
+
+                if (targetEnemy != null) {
+                    targetEnemy.setX(x);
+                    targetEnemy.setY(y);
+                    targetEnemy.setHealth(health);
+                    targetEnemy.setAlive(isAlive);
+                    if (!isAlive) {
+                        targetEnemy.setNetworkControlled(false);
+                    }
+                }
+            } catch (NumberFormatException ignored) {
             }
+        }
+
+        if (!deadEnemyIds.isEmpty()) {
+            currentDungeon.getEnemies().removeIf(enemy -> deadEnemyIds.contains(enemy.getId()));
+        }
+
+        if (!seenEnemyIds.isEmpty() && isMultiplayer && !isHost) {
+            currentDungeon.getEnemies().removeIf(enemy -> enemy.getId() != 0 && !seenEnemyIds.contains(enemy.getId()));
         }
     }
 
     private void updateProjectilesFromServer(String projectilesData) {
         String[] projectileEntries = projectilesData.split("\\|");
         projectiles.clear(); // Szinkronizáljuk a lövedékeket, töröljük a helyi listát
+        pendingProjectileRemovals.clear();
 
         for (String entry : projectileEntries) {
             if (!entry.isEmpty()) {
@@ -3712,6 +3862,7 @@ public class GameManager {
 
         if (projectiles != null) {
             projectiles.clear();
+            pendingProjectileRemovals.clear();
         }
 
         if (effects != null) {
@@ -3804,6 +3955,7 @@ public class GameManager {
 
         if (projectiles != null) {
             projectiles.clear();
+            pendingProjectileRemovals.clear();
         }
 
         if (effects != null) {
@@ -4084,11 +4236,14 @@ public class GameManager {
             }
 
             for (Enemy enemy : hitEnemies) {
-                float finalDamage = player.calculateFinalDamage(weapon.getDamage(), enemy);
-                enemy.takeDamage(finalDamage);
+                if (!isMultiplayer || isHost) {
+                    float finalDamage = player.calculateFinalDamage(weapon.getDamage(), enemy);
+                    enemy.takeDamage(finalDamage);
+                }
             }
 
             int tileSize = currentDungeon.getTileSize();
+            boolean canAffectEnvironment = !isMultiplayer || isHost;
             for (int x = 0; x < currentDungeon.getWidthTiles(); x++) {
                 for (int y = 0; y < currentDungeon.getHeightTiles(); y++) {
                     Tile tile = currentDungeon.getTiles()[x][y];
@@ -4101,16 +4256,19 @@ public class GameManager {
                         );
 
                         if (distance < attackRange) {
-                            tile.takeDamage(weapon.getDamage());
-                            if (tile.isDestroyed()) {
-                                tile.setType(Tile.TileType.FLOOR);
-                                tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
-                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                    broadcastEffectSpawn(spawnedEffect);
+                            if (canAffectEnvironment) {
+                                tile.takeDamage(weapon.getDamage());
+                                if (tile.isDestroyed()) {
+                                    tile.setType(Tile.TileType.FLOOR);
+                                    tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
+                                    Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                    if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                        broadcastEffectSpawn(spawnedEffect);
+                                    }
+                                } else {
+                                    tile.updateTextureByHealth();
                                 }
-                            } else {
-                                tile.updateTextureByHealth();
+                                sendTileStateUpdate(x, y, tile.getHealth(), tile.isDestroyed());
                             }
                             hitSomething = true;
                         }
@@ -4201,6 +4359,14 @@ public class GameManager {
 
         String message = String.format(Locale.US, "EFFECT_PICKUP:%d:%d:%s", effectId, playerId, type.name());
         multiplayerClient.sendTCPMessage(message);
+    }
+
+    private void notifyServerProjectileRemoval(int projectileId) {
+        if (!isMultiplayer || !isHost || projectileId < 0 || multiplayerClient == null || !multiplayerClient.isConnected()) {
+            return;
+        }
+
+        multiplayerClient.sendProjectileRemoved(projectileId);
     }
 
     private void removeEffectById(int effectId) {
