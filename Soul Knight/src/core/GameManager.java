@@ -74,6 +74,7 @@ public class GameManager {
     private Map<Integer, Player> otherPlayers = new HashMap<>();
     private Map<Integer, PlayerState> serverPlayerStates = new HashMap<>();
     private Set<String> processedGateEvents = new HashSet<>();
+    private final Set<String> pendingGateTriggers = new LinkedHashSet<>();
 
     // Interpolációhoz
     private float interpolationSpeed = 5.0f;
@@ -984,6 +985,7 @@ public class GameManager {
             playerEffects = new ArrayList<>();
         }
         processedGateEvents.clear();
+        pendingGateTriggers.clear();
 
         if (activeEffectsById == null) {
             activeEffectsById = new HashMap<>();
@@ -991,7 +993,6 @@ public class GameManager {
             activeEffectsById.clear();
         }
         nextEffectId = 1;
-        processedGateEvents.clear();
 
         weaponFactory.loadWeaponSprites();
 
@@ -1362,6 +1363,7 @@ public class GameManager {
             return;
         }
 
+        processPendingGateTriggers();
         // Player update - UGYANAZ
         player.update(deltaTime, inputHandler, collisionManager, currentTime);
 
@@ -2228,6 +2230,11 @@ public class GameManager {
             return;
         }
 
+        if (player == null || currentDungeon == null) {
+            pendingGateTriggers.add(gateData);
+            return;
+        }
+
         if (processedGateEvents.contains(gateData)) {
             return;
         }
@@ -2235,8 +2242,30 @@ public class GameManager {
         List<Tile> gateGroup = findGateGroupByEventKey(gateData);
         if (gateGroup != null) {
             processedGateEvents.add(gateData);
-            if (player != null) {
+            player.triggerGateAnimation(gateGroup);
+        } else {
+            pendingGateTriggers.add(gateData);
+        }
+    }
+
+    private void processPendingGateTriggers() {
+        if (pendingGateTriggers.isEmpty() || player == null || currentDungeon == null) {
+            return;
+        }
+
+        Iterator<String> iterator = pendingGateTriggers.iterator();
+        while (iterator.hasNext()) {
+            String gateData = iterator.next();
+            if (processedGateEvents.contains(gateData)) {
+                iterator.remove();
+                continue;
+            }
+
+            List<Tile> gateGroup = findGateGroupByEventKey(gateData);
+            if (gateGroup != null) {
+                processedGateEvents.add(gateData);
                 player.triggerGateAnimation(gateGroup);
+                iterator.remove();
             }
         }
     }
@@ -2380,6 +2409,7 @@ public class GameManager {
                     teleportPadTexture
             );
             processedGateEvents.clear();
+            pendingGateTriggers.clear();
 
             applyDifficultyToEnemies();
 
@@ -2402,6 +2432,8 @@ public class GameManager {
 
             // Collision manager
             collisionManager = new CollisionManager(currentDungeon);
+
+            processPendingGateTriggers();
 
             // ✨ FONTOS: Kamera beállítása a player-re
             int dungeonWidthPixels = currentDungeon.getWidthTiles() * currentDungeon.getTileSize();
@@ -2875,8 +2907,7 @@ public class GameManager {
                 float newX = currentX + (targetX - currentX) * 10.0f * deltaTime;
                 float newY = currentY + (targetY - currentY) * 10.0f * deltaTime;
 
-                otherPlayer.setX(newX);
-                otherPlayer.setY(newY);
+                otherPlayer.applyNetworkMovement(newX, newY, deltaTime);
             }
         }
     }
