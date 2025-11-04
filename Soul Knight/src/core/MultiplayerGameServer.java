@@ -335,8 +335,19 @@ public class MultiplayerGameServer {
                         newHealth,
                         isAlive);
 
+                PlayerState playerState = gameState.getPlayerState(playerId);
+                if (playerState != null) {
+                    playerState.setHealth(newHealth);
+                    playerState.setAlive(isAlive);
+                }
+
                 System.out.println("📤 SERVER: Broadcasting damage to ALL players: " + broadcastData);
-                broadcastUDPToAll("PLAYER_DAMAGE:" + broadcastData);
+                String fullMessage = "PLAYER_DAMAGE:" + broadcastData;
+                broadcastTCPMessage(fullMessage);
+
+                if (!isAlive) {
+                    broadcastTCPMessage("PLAYER_ELIMINATED:" + playerId);
+                }
 
             } else {
                 System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
