@@ -65,6 +65,8 @@ public class Player extends Entity {
     private boolean isWalking = false;
     private boolean isAttacking = false;
     private boolean isAbilityActive = false;
+    private float networkWalkHoldTime = 0f;
+    private static final float NETWORK_WALK_HOLD_DURATION = 0.2f;
 
     private WeaponFactory weaponFactory;
     private String currentWeaponId;
@@ -763,14 +765,23 @@ public class Player extends Entity {
             dy = 0f;
         }
 
+        float animationDelta = deltaTime > 0f ? deltaTime : (1f / 60f);
         boolean moving = Math.abs(dx) > 0.1f || Math.abs(dy) > 0.1f;
+
+        if (moving) {
+            networkWalkHoldTime = NETWORK_WALK_HOLD_DURATION;
+        } else if (networkWalkHoldTime > 0f) {
+            networkWalkHoldTime = Math.max(0f, networkWalkHoldTime - animationDelta);
+            moving = true;
+        }
+
         this.isWalking = moving;
 
         if (moving) {
             if (isAbilityActive && activeWalkSprite != null) {
-                activeWalkSprite.update(deltaTime);
+                activeWalkSprite.update(animationDelta);
             } else if (walkSprite != null) {
-                walkSprite.update(deltaTime);
+                walkSprite.update(animationDelta);
             }
         } else {
             if (walkSprite != null) {

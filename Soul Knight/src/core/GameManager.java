@@ -1364,6 +1364,7 @@ public class GameManager {
         }
 
         processPendingGateTriggers();
+
         // Player update - UGYANAZ
         player.update(deltaTime, inputHandler, collisionManager, currentTime);
 
@@ -1531,6 +1532,13 @@ public class GameManager {
                     }
                 }
                 if (hitSomething) break;
+            }
+
+            if (hitSomething) {
+                if (!projectile.isAlive()) {
+                    projectileIterator.remove();
+                }
+                continue;
             }
 
             for (Enemy enemy : currentDungeon.getEnemies()) {
@@ -1877,6 +1885,9 @@ public class GameManager {
                 case "PLAYER_DAMAGE":
                     handlePlayerDamageUpdate(data);
                     break;
+                case "PLAYER_ELIMINATED":
+                    handlePlayerEliminated(data);
+                    break;
                 default:
                     //System.out.println("❓ ISMERETLEN UDP COMMAND: " + command);
                     System.out.println("   Teljes üzenet: " + message);
@@ -2000,6 +2011,10 @@ public class GameManager {
 
             case "PLAYER_DAMAGE":
                 handlePlayerDamageUpdate(data);
+                break;
+
+            case "PLAYER_ELIMINATED":
+                handlePlayerEliminated(data);
                 break;
 
             case "EFFECT_SPAWN":
@@ -3163,6 +3178,18 @@ public class GameManager {
         }
     }
 
+    private void handlePlayerEliminated(String data) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        try {
+            int eliminatedPlayerId = Integer.parseInt(data.trim());
+            forceEnemyRetarget(eliminatedPlayerId);
+        } catch (NumberFormatException ignored) {
+        }
+    }
+
     private void handleEffectSpawnMessage(String data) {
         if (data == null || data.isEmpty()) {
             return;
@@ -3377,29 +3404,63 @@ public class GameManager {
     }
 
     private void updateEnemiesFromServer(String enemiesData) {
-        String[] enemyEntries = enemiesData.split("\\|");
-        for (String entry : enemyEntries) {
-            if (!entry.isEmpty()) {
-                String[] parts = entry.split(":");
-                if (parts.length >= 5) {
-                    int enemyId = Integer.parseInt(parts[0]);
-                    float x = Float.parseFloat(parts[1]);
-                    float y = Float.parseFloat(parts[2]);
-                    float health = Float.parseFloat(parts[3]);
-                    boolean isAlive = Boolean.parseBoolean(parts[4]);
+        if (currentDungeon == null || enemiesData == null || enemiesData.isEmpty()) {
+            return;
+        }
 
-                    for (Enemy enemy : currentDungeon.getEnemies()) {
-                        if (enemy.getId() == enemyId) {
-                            enemy.setX(x);
-                            enemy.setY(y);
-                            enemy.setHealth(health);
-                            enemy.setAlive(isAlive);
-                            //System.out.println("👹 Enemy synced from server: ID=" + enemyId + ", x=" + x + ", y=" + y);
-                            break;
-                        }
+        String[] enemyEntries = enemiesData.split("\\|");
+        Set<Integer> deadEnemyIds = new HashSet<>();
+        Set<Integer> seenEnemyIds = new HashSet<>();
+
+        for (String entry : enemyEntries) {
+            if (entry == null || entry.isEmpty()) {
+                continue;
+            }
+
+            String[] parts = entry.contains(",") ? entry.split(",") : entry.split(":");
+            if (parts.length < 5) {
+                continue;
+            }
+
+            try {
+                int enemyId = Integer.parseInt(parts[0]);
+                float x = Float.parseFloat(parts[1]);
+                float y = Float.parseFloat(parts[2]);
+                float health = Float.parseFloat(parts[3]);
+                boolean isAlive = Boolean.parseBoolean(parts[4]);
+
+                seenEnemyIds.add(enemyId);
+                if (!isAlive) {
+                    deadEnemyIds.add(enemyId);
+                }
+
+                Enemy targetEnemy = null;
+                for (Enemy enemy : currentDungeon.getEnemies()) {
+                    if (enemy.getId() == enemyId) {
+                        targetEnemy = enemy;
+                        break;
                     }
                 }
+
+                if (targetEnemy != null) {
+                    targetEnemy.setX(x);
+                    targetEnemy.setY(y);
+                    targetEnemy.setHealth(health);
+                    targetEnemy.setAlive(isAlive);
+                    if (!isAlive) {
+                        targetEnemy.setNetworkControlled(false);
+                    }
+                }
+            } catch (NumberFormatException ignored) {
             }
+        }
+
+        if (!deadEnemyIds.isEmpty()) {
+            currentDungeon.getEnemies().removeIf(enemy -> deadEnemyIds.contains(enemy.getId()));
+        }
+
+        if (!seenEnemyIds.isEmpty() && isMultiplayer && !isHost) {
+            currentDungeon.getEnemies().removeIf(enemy -> enemy.getId() != 0 && !seenEnemyIds.contains(enemy.getId()));
         }
     }
 

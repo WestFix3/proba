@@ -345,6 +345,10 @@ public class MultiplayerGameServer {
                 String fullMessage = "PLAYER_DAMAGE:" + broadcastData;
                 broadcastTCPMessage(fullMessage);
 
+                if (!isAlive) {
+                    broadcastTCPMessage("PLAYER_ELIMINATED:" + playerId);
+                }
+
             } else {
                 System.err.println("❌ Invalid PLAYER_DAMAGE data: " + data);
                 return;
