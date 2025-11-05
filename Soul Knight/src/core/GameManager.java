@@ -4221,6 +4221,9 @@ public class GameManager {
     }
 
     private Effect spawnRandomEffect(float x, float y) {
+        if (isMultiplayer && !isHost) {
+            return null;
+        }
         ensureEffectRandom();
 
         if (effectRandom.nextFloat() < 0.4f) {
