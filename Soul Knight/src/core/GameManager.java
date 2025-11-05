@@ -1428,7 +1428,16 @@ public class GameManager {
                         System.out.println("👹 ENEMY-TARGET COLLISION! EnemyID: " + enemy.getId() +
                                 ", Target: " + targetPlayer.getName() +
                                 ", Damage: " + enemy.getAttackDamage());
-                        targetPlayer.takeDamage(enemy.getAttackDamage());
+                        float damage = enemy.getAttackDamage();
+                        targetPlayer.takeDamage(damage);
+
+                        if (!targetPlayer.isAlive()) {
+                            int defeatedPlayerId = targetPlayer.getId();
+                            if (defeatedPlayerId < 0 && targetPlayer == player) {
+                                defeatedPlayerId = myPlayerId;
+                            }
+                            forceEnemyRetarget(defeatedPlayerId);
+                        }
                     }
                 }
             }
@@ -1522,8 +1531,6 @@ public class GameManager {
                                         if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
                                             broadcastEffectSpawn(spawnedEffect);
                                         }
-                                    } else {
-                                        tile.updateTextureByHealth();
                                     }
                                     if (isMultiplayer && isHost) {
                                         sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
@@ -1642,10 +1649,10 @@ public class GameManager {
             return;
         }
 
-        Player deadPlayer;
+        Player deadPlayer = null;
         if (deadPlayerId == myPlayerId || deadPlayerId < 0) {
             deadPlayer = player;
-        } else {
+        } else if (otherPlayers.containsKey(deadPlayerId)) {
             deadPlayer = otherPlayers.get(deadPlayerId);
         }
 
@@ -1655,10 +1662,20 @@ public class GameManager {
             }
 
             Player currentTarget = enemy.getTargetPlayer();
-            if (currentTarget == null || currentTarget == deadPlayer || !currentTarget.isAlive()) {
+            boolean targetInvalid = currentTarget == null || !currentTarget.isAlive();
+            if (!targetInvalid && deadPlayer != null) {
+                targetInvalid = currentTarget == deadPlayer;
+            }
+            if (!targetInvalid && deadPlayerId >= 0 && currentTarget != null && currentTarget.getId() == deadPlayerId) {
+                targetInvalid = true;
+            }
+
+            if (targetInvalid) {
                 Player newTarget = findClosestPlayerToEnemy(enemy);
                 if (newTarget != null && newTarget.isAlive()) {
                     enemy.setTargetPlayer(newTarget);
+                } else {
+                    enemy.setTargetPlayer(null);
                 }
             }
         }
