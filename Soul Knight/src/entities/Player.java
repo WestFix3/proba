@@ -84,11 +84,11 @@ public class Player extends Entity {
     private List<Tile> currentAnimatingGateGroup = null;
     private transient Consumer<List<Tile>> gateOpenListener;
 
-//    private float CRIT_CHANCE = 0.05f;
-//    private static final float CRIT_MULTIPLIER = 2.0f;
+    private float CRIT_CHANCE = 0.05f;
+    private static final float CRIT_MULTIPLIER = 2.0f;
 
-    private float CRIT_CHANCE = 1.00f;
-    private static final float CRIT_MULTIPLIER = 1000000.0f;
+//    private float CRIT_CHANCE = 1.00f;
+//    private static final float CRIT_MULTIPLIER = 1000000.0f;
 
     private float critIndicatorTime = 0.0f;
     private static final float CRIT_DISPLAY_DURATION = 0.8f;
