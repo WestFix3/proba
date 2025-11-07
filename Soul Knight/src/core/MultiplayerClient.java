@@ -259,6 +259,24 @@ public class MultiplayerClient {
         }
     }
 
+    public void sendEnemyDamage(int enemyId, float damageAmount, float newHealth, boolean isAlive) {
+        if (!connected) {
+            return;
+        }
+
+        if (enemyId < 0) {
+            System.err.println("❌ Cannot send ENEMY_DAMAGE without a valid enemyId");
+            return;
+        }
+
+        String message = String.format(Locale.US, "ENEMY_DAMAGE:%d:%.2f:%.2f:%b",
+                enemyId,
+                damageAmount,
+                newHealth,
+                isAlive);
+        sendTCPMessage(message);
+    }
+
     public void sendProjectileHit(int projectileId, int enemyId, float damage) {
         String message = String.format(java.util.Locale.US,
                 "PROJECTILE_HIT:%d:%d:%.3f", projectileId, enemyId, damage);

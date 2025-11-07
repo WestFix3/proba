@@ -1521,20 +1521,25 @@ public class GameManager {
                         if (collisionManager.checkTileCollision(projectile, tile, x, y)) {
                             projectile.setAlive(false);
                             if (tile.getType() == Tile.TileType.BOX) {
-                                if (!isMultiplayer || isHost) {
-                                    tile.takeDamage(1);
-                                    boolean destroyed = tile.isDestroyed();
-                                    if (destroyed) {
-                                        tile.setType(Tile.TileType.FLOOR);
-                                        tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                        Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
-                                        if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                            broadcastEffectSpawn(spawnedEffect);
-                                        }
-                                    }
-                                    if (isMultiplayer && isHost) {
-                                        sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
-                                    }
+                                tile.takeDamage(1);
+                                boolean destroyed = tile.isDestroyed();
+
+                                Effect spawnedEffect = null;
+                                if (destroyed) {
+                                    tile.setType(Tile.TileType.FLOOR);
+                                    tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
+                                    tile.setIsCollidable(false);
+                                    spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                } else {
+                                    tile.updateTextureByHealth();
+                                }
+
+                                if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
+                                }
+
+                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    broadcastEffectSpawn(spawnedEffect);
                                 }
                             }
                             hitSomething = true;
@@ -1556,6 +1561,7 @@ public class GameManager {
                 if (enemy.isAlive() && collisionManager.checkCollision(projectile, enemy)) {
                     float finalDamage = player.calculateFinalDamage(projectile.getDamage(), enemy);
                     enemy.takeDamage(finalDamage);
+                    notifyEnemyDamage(enemy, finalDamage);
                     projectile.setAlive(false);
                     hitSomething = true;
                     break;
@@ -1800,6 +1806,26 @@ public class GameManager {
         updatePlayerEffects(deltaTime);
         removeCollectedEffects();
         currentDungeon.getEnemies().removeIf(enemy -> !enemy.isAlive());
+    }
+
+    private void notifyEnemyDamage(Enemy enemy, float damageAmount) {
+        if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected()) {
+            return;
+        }
+
+        if (enemy == null) {
+            return;
+        }
+
+        int enemyId = enemy.getId();
+        if (enemyId < 0) {
+            return;
+        }
+
+        float newHealth = Math.max(0f, enemy.getHealth());
+        boolean isAlive = enemy.isAlive();
+
+        multiplayerClient.sendEnemyDamage(enemyId, damageAmount, newHealth, isAlive);
     }
 
     private void sendPlayerInputToServer() {
@@ -4199,6 +4225,7 @@ public class GameManager {
             for (Enemy enemy : hitEnemies) {
                 float finalDamage = player.calculateFinalDamage(weapon.getDamage(), enemy);
                 enemy.takeDamage(finalDamage);
+                notifyEnemyDamage(enemy, finalDamage);
             }
 
             int tileSize = currentDungeon.getTileSize();
@@ -4214,22 +4241,25 @@ public class GameManager {
                         );
 
                         if (distance < attackRange) {
-                            if (!isMultiplayer || isHost) {
-                                tile.takeDamage(weapon.getDamage());
-                                boolean destroyed = tile.isDestroyed();
-                                if (destroyed) {
-                                    tile.setType(Tile.TileType.FLOOR);
-                                    tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                    Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
-                                    if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                        broadcastEffectSpawn(spawnedEffect);
-                                    }
-                                } else {
-                                    tile.updateTextureByHealth();
-                                }
-                                if (isMultiplayer && isHost) {
-                                    sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
-                                }
+                            tile.takeDamage(weapon.getDamage());
+                            boolean destroyed = tile.isDestroyed();
+
+                            Effect spawnedEffect = null;
+                            if (destroyed) {
+                                tile.setType(Tile.TileType.FLOOR);
+                                tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
+                                tile.setIsCollidable(false);
+                                spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                            } else {
+                                tile.updateTextureByHealth();
+                            }
+
+                            if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
+                            }
+
+                            if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                broadcastEffectSpawn(spawnedEffect);
                             }
                             hitSomething = true;
                         }

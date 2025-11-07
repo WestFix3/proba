@@ -34,6 +34,10 @@ public class MultiplayerGameServer {
     private Set<Integer> activeEffectIds = ConcurrentHashMap.newKeySet();
     private Set<Integer> consumedEffectIds = ConcurrentHashMap.newKeySet();
 
+    private volatile boolean hostControlsEnemies = false;
+    private volatile long lastHostEnemySync = 0L;
+    private static final long HOST_ENEMY_SYNC_TIMEOUT_MS = 1500L;
+
     public MultiplayerGameServer() {
         this.connectedPlayers = new ConcurrentHashMap<>();
         this.playerIdCounter = new AtomicInteger(1);
@@ -192,7 +196,7 @@ public class MultiplayerGameServer {
         switch (command) {
             case "ENEMY_UPDATE":
                 //System.out.println("👹 [SERVER] Enemy update from player " + session.getPlayerId() + ": " + data);
-                handleEnemyUpdateFromClient(data);
+                handleEnemyUpdateFromClient(session, data);
                 break;
             case "ENEMY_DAMAGE":
                 handleEnemyDamage(data);
@@ -648,11 +652,13 @@ public class MultiplayerGameServer {
         gameState.getEnemyStates().clear(); // Ürítsük ki a régi ellenségeket
         activeEffectIds.clear();
         consumedEffectIds.clear();
+        hostControlsEnemies = false;
+        lastHostEnemySync = 0L;
 
         System.out.println("✅ Shared dungeon ready for sync - clients will generate enemies");
     }
 
-    private void handleEnemyUpdateFromClient(String data) {
+    private void handleEnemyUpdateFromClient(PlayerSession session, String data) {
         try {
             //System.out.println("👹 [SERVER] Processing enemy update from HOST: " + data);
 
@@ -681,6 +687,11 @@ public class MultiplayerGameServer {
                 // ✨ A szerver is tartalmazza az enemy állapotát, de továbbra is broadcastoljuk az update-et
                 broadcastUDPToAll("ENEMY_UPDATE:" + data);
 
+                if (session != null && session.isHost()) {
+                    hostControlsEnemies = true;
+                    lastHostEnemySync = System.currentTimeMillis();
+                }
+
                 //System.out.println("✅ [SERVER] Enemy " + enemyId + " update broadcasted to all clients");
             }
 
@@ -701,6 +712,20 @@ public class MultiplayerGameServer {
         gameState.addEnemyState(newEnemy);
 
         return newEnemy;
+    }
+
+    private boolean shouldServerControlEnemies() {
+        if (!hostControlsEnemies) {
+            return true;
+        }
+
+        long timeSinceLastSync = System.currentTimeMillis() - lastHostEnemySync;
+        if (timeSinceLastSync > HOST_ENEMY_SYNC_TIMEOUT_MS) {
+            hostControlsEnemies = false;
+            return true;
+        }
+
+        return false;
     }
 
     private void gameLoop() {
@@ -757,8 +782,24 @@ public class MultiplayerGameServer {
         // Frissítsd a játék állapotát
         updatePlayerPositions(deltaTime);
         updateProjectiles(deltaTime);
-        updateEnemies(deltaTime);
+        //updateEnemies(deltaTime);
         checkCollisions();
+
+        if (shouldServerControlEnemies()) {
+            updateEnemies(deltaTime);
+        }
+    }
+
+    private void broadcastTCPToOthers(int excludePlayerId, String message) {
+        for (PlayerSession session : connectedPlayers.values()) {
+            if (session.getPlayerId() == excludePlayerId) {
+                continue;
+            }
+
+            if (session.getClientSocket() != null && !session.getClientSocket().isClosed()) {
+                sendTCPResponse(session.getClientSocket(), message);
+            }
+        }
     }
 
     private void updatePlayerPositions(float deltaTime) {
@@ -1239,6 +1280,11 @@ public class MultiplayerGameServer {
                 }
             } catch (IOException e) {
                 System.err.println("❌ Error closing player socket: " + e.getMessage());
+            }
+
+            if (session.isHost()) {
+                hostControlsEnemies = false;
+                lastHostEnemySync = 0L;
             }
 
             // Eltávolítjuk a játékos állapotát is
