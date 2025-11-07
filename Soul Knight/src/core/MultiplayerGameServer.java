@@ -659,11 +659,27 @@ public class MultiplayerGameServer {
             String[] parts = data.split(",");
             if (parts.length >= 7) {
                 int enemyId = Integer.parseInt(parts[0]);
+                float x = Float.parseFloat(parts[1]);
+                float y = Float.parseFloat(parts[2]);
+                float health = Float.parseFloat(parts[3]);
+                boolean isAlive = Boolean.parseBoolean(parts[4]);
+                float damage = Float.parseFloat(parts[5]);
 
-                // ✨ CSAK TOVÁBBÍTJUK A HOST UPDATE-ÉT MINDEN KLIENSNEK
-                // NEM tároljuk el a szerveren, mert a kliensek már rendelkeznek az enemy-kkel
-                String enemyMessage = "ENEMY_UPDATE:" + data;
-                broadcastUDPToAll(enemyMessage);
+                EnemyState enemyState = findOrCreateEnemy(enemyId, x, y, health, damage);
+                if (enemyState != null) {
+                    enemyState.setX(x);
+                    enemyState.setY(y);
+                    enemyState.setHealth(health);
+                    enemyState.setAlive(isAlive);
+                    enemyState.setDamage(damage);
+
+                    if (health > enemyState.getMaxHealth()) {
+                        enemyState.setMaxHealth(health);
+                    }
+                }
+
+                // ✨ A szerver is tartalmazza az enemy állapotát, de továbbra is broadcastoljuk az update-et
+                broadcastUDPToAll("ENEMY_UPDATE:" + data);
 
                 //System.out.println("✅ [SERVER] Enemy " + enemyId + " update broadcasted to all clients");
             }
@@ -674,12 +690,17 @@ public class MultiplayerGameServer {
         }
     }
 
-    private EnemyState findOrCreateEnemy(int enemyId) {
-        // ✨ JAVÍTÁS: CSAK LOGOLJUK, DE NE HOZZUNK LÉTRE ENEMY-T
-        //System.out.println("🔍 [SERVER] Received update for enemy ID: " + enemyId);
+    private EnemyState findOrCreateEnemy(int enemyId, float x, float y, float health, float damage) {
+        EnemyState existing = gameState.getEnemyState(enemyId);
+        if (existing != null) {
+            return existing;
+        }
+        float maxHealth = Math.max(health, 1.0f);
+        EnemyState newEnemy = new EnemyState(enemyId, "UNKNOWN", x, y, health, maxHealth);
+        newEnemy.setDamage(damage);
+        gameState.addEnemyState(newEnemy);
 
-        // ✨ CSAK NULL-T RETURNÖLJÜK - A SZERVER NEM KEZEL ENEMY-KET
-        return null;
+        return newEnemy;
     }
 
     private void gameLoop() {
