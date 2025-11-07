@@ -1932,6 +1932,9 @@ public class GameManager {
                 case "PLAYER_DAMAGE":
                     handlePlayerDamageUpdate(data);
                     break;
+                case "ENEMY_DAMAGE":
+                    handleEnemyDamageUpdate(data);
+                    break;
                 case "PLAYER_ELIMINATED":
                     handlePlayerEliminated(data);
                     break;
@@ -2060,6 +2063,10 @@ public class GameManager {
                 handlePlayerDamageUpdate(data);
                 break;
 
+            case "ENEMY_DAMAGE":
+                handleEnemyDamageUpdate(data);
+                break;
+
             case "PLAYER_ELIMINATED":
                 handlePlayerEliminated(data);
                 break;
@@ -2112,6 +2119,48 @@ public class GameManager {
             default:
                 System.out.println("❓ ISMERETLEN ÜZENET: " + message);
                 break;
+        }
+    }
+
+    private void handleEnemyDamageUpdate(String data) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        try {
+            String[] parts = data.split(":");
+            if (parts.length < 4) {
+                System.err.println("❌ Invalid ENEMY_DAMAGE data: " + data);
+                return;
+            }
+
+            int enemyId = Integer.parseInt(parts[0]);
+            float damageAmount = Float.parseFloat(parts[1]);
+            float newHealth = Float.parseFloat(parts[2]);
+            boolean isAlive = Boolean.parseBoolean(parts[3]);
+
+            Enemy targetEnemy = findEnemyById(enemyId);
+            if (targetEnemy == null) {
+                System.out.println("⚠️ ENEMY_DAMAGE frissítés ismeretlen ellenségre: " + enemyId);
+                return;
+            }
+
+            float clampedHealth = Math.max(0f, newHealth);
+
+            targetEnemy.setHealth(clampedHealth);
+            targetEnemy.setAlive(isAlive);
+
+            if (!isAlive) {
+                targetEnemy.setNetworkControlled(false);
+            }
+
+            // Ha az enemy jelenleg nem látható kritikus visszajelzést, de sebzést kapott, villantsuk meg
+            if (damageAmount > 0f) {
+                targetEnemy.activateCritIndicator();
+            }
+
+        } catch (Exception e) {
+            System.err.println("❌ Error in handleEnemyDamageUpdate: " + e.getMessage());
         }
     }
 
