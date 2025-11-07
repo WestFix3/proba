@@ -41,7 +41,7 @@ public class ProjectileState {
 
     public String serialize() {
         // ✨ JAVÍTÁS: Mindig pontot használj tizedeselválasztóként
-        return String.format(Locale.US, "%d,%.2f,%.2f,%.2f,%.2f,%d,%.1f,%b",
+        return String.format(Locale.US, "%d,%.3f,%.3f,%.3f,%.3f,%d,%.3f,%b",
                 projectileId, x, y, velocityX, velocityY, ownerPlayerId, damage, isActive);
     }
 }

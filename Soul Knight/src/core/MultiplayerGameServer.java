@@ -831,12 +831,14 @@ public class MultiplayerGameServer {
                 }
 
                 // Broadcast collision to all clients
-                broadcastUDPToAll("PROJECTILE_HIT:" +
-                        projectile.getProjectileId() + ":" +
-                        enemy.getEnemyId() + ":" +
-                        projectile.getDamage() + ":" +
-                        enemy.getHealth() + ":" +
+                String hitMessage = String.format(Locale.US,
+                        "PROJECTILE_HIT:%d:%d:%.3f:%.3f:%b",
+                        projectile.getProjectileId(),
+                        enemy.getEnemyId(),
+                        projectile.getDamage(),
+                        enemy.getHealth(),
                         enemy.isAlive());
+                broadcastUDPToAll(hitMessage);
 
                 break;
             }

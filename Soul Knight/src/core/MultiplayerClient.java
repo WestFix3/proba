@@ -248,7 +248,7 @@ public class MultiplayerClient {
         try {
             // ✨ FONTOS: Használj US locale-t a formázáshoz
             String message = String.format(java.util.Locale.US,
-                    "PROJECTILE_CREATE:%.2f:%.2f:%.2f:%.2f:%.1f",
+                    "PROJECTILE_CREATE:%.3f:%.3f:%.3f:%.3f:%.3f",
                     x, y, velocityX, velocityY, damage);
 
             //System.out.println("📤 [CLIENT] Sending PROJECTILE_CREATE: " + message);
@@ -260,8 +260,8 @@ public class MultiplayerClient {
     }
 
     public void sendProjectileHit(int projectileId, int enemyId, float damage) {
-        String message = String.format("PROJECTILE_HIT:%d:%d:%.1f",
-                projectileId, enemyId, damage);
+        String message = String.format(java.util.Locale.US,
+                "PROJECTILE_HIT:%d:%d:%.3f", projectileId, enemyId, damage);
         sendTCPMessage(message);
     }
 
