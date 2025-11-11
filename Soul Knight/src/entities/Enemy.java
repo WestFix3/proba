@@ -112,6 +112,10 @@ public class Enemy extends Entity {
             this.targetPlayer = (Player) args[0];
         }
 
+        if (targetPlayer != null && !targetPlayer.isAlive()) {
+            setTargetPlayer(null);
+        }
+
         long currentTime = System.currentTimeMillis();
         boolean cooldownReady = (currentTime - lastPathCalculationTime > PATH_CALCULATION_COOLDOWN);
 
@@ -590,6 +594,7 @@ public class Enemy extends Entity {
 
     protected void checkAndAttackPlayer() {
         if (targetPlayer == null || targetPlayer.getHealth() <= 0) return;
+        if (targetPlayer.hasSpawnProtection()) return;
 
         boolean collision = (
                 this.x < targetPlayer.getX() + targetPlayer.getWidth() &&
@@ -784,6 +789,11 @@ public class Enemy extends Entity {
             calculatePathToTarget(player.getX(), player.getY());
             this.hasTarget = true;
             this.lastPathCalculationTime = System.currentTimeMillis();
+        } else {
+            this.hasTarget = false;
+            if (currentPath != null) {
+                currentPath.clear();
+            }
         }
     }
 

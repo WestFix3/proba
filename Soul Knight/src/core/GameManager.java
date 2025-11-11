@@ -1439,6 +1439,7 @@ public class GameManager {
 
                     // Collision csak élő target-tel
                     if (targetPlayer != null && targetPlayer.isAlive() &&
+                            !targetPlayer.hasSpawnProtection() &&
                             collisionManager.checkCollision(targetPlayer, enemy)) {
 
                         System.out.println("👹 ENEMY-TARGET COLLISION! EnemyID: " + enemy.getId() +
@@ -2354,6 +2355,102 @@ public class GameManager {
         return builder.toString();
     }
 
+    private List<int[]> parseGateCoordinates(String gateData) {
+        List<int[]> coordinates = new ArrayList<>();
+        if (gateData == null || gateData.isEmpty()) {
+            return coordinates;
+        }
+
+        String[] entries = gateData.split("\\|");
+        for (String entry : entries) {
+            String[] parts = entry.split(",");
+            if (parts.length != 2) {
+                continue;
+            }
+
+            try {
+                int gridX = Integer.parseInt(parts[0]);
+                int gridY = Integer.parseInt(parts[1]);
+                coordinates.add(new int[]{gridX, gridY});
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return coordinates;
+    }
+
+    private void applyGateTileUpdates(String gateData) {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        List<int[]> coordinates = parseGateCoordinates(gateData);
+        if (coordinates.isEmpty()) {
+            return;
+        }
+
+        Map<Tile.TileType, Texture> textureMap = tileTextures;
+        Set<Long> coordinateKeys = new HashSet<>();
+
+        for (int[] coord : coordinates) {
+            if (coord == null || coord.length < 2) {
+                continue;
+            }
+
+            int gridX = coord[0];
+            int gridY = coord[1];
+
+            if (gridX < 0 || gridY < 0 ||
+                    gridX >= currentDungeon.getWidthTiles() ||
+                    gridY >= currentDungeon.getHeightTiles()) {
+                continue;
+            }
+
+            long key = (((long) gridX) << 32) | (gridY & 0xffffffffL);
+            coordinateKeys.add(key);
+
+            Tile tile = currentDungeon.getTiles()[gridX][gridY];
+            if (tile == null) {
+                continue;
+            }
+
+            tile.setType(Tile.TileType.FLOOR);
+            if (textureMap != null && textureMap.containsKey(Tile.TileType.FLOOR)) {
+                tile.setTexture(textureMap.get(Tile.TileType.FLOOR));
+            }
+            tile.setIsCollidable(false);
+        }
+
+        if (coordinateKeys.isEmpty() || currentDungeon.gateCorridorGroups == null) {
+            return;
+        }
+
+        Iterator<List<Tile>> iterator = currentDungeon.gateCorridorGroups.iterator();
+        while (iterator.hasNext()) {
+            List<Tile> group = iterator.next();
+            if (group == null || group.isEmpty()) {
+                continue;
+            }
+
+            boolean matches = true;
+            for (Tile tile : group) {
+                if (tile == null) {
+                    continue;
+                }
+
+                long key = (((long) tile.getGridX()) << 32) | (tile.getGridY() & 0xffffffffL);
+                if (!coordinateKeys.contains(key)) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches) {
+                iterator.remove();
+            }
+        }
+    }
+
     private void handleGateTriggerMessage(String gateData) {
         if (gateData == null || gateData.isEmpty()) {
             return;
@@ -2365,15 +2462,29 @@ public class GameManager {
         }
 
         if (processedGateEvents.contains(gateData)) {
+            applyGateTileUpdates(gateData);
             return;
         }
 
         List<Tile> gateGroup = findGateGroupByEventKey(gateData);
         if (gateGroup != null) {
+            boolean hasGateTile = false;
+            for (Tile tile : gateGroup) {
+                if (tile != null && tile.getType() == Tile.TileType.GATE) {
+                    hasGateTile = true;
+                    break;
+                }
+            }
+
             processedGateEvents.add(gateData);
-            player.triggerGateAnimation(gateGroup);
+            if (hasGateTile) {
+                player.triggerGateAnimation(gateGroup);
+            } else {
+                applyGateTileUpdates(gateData);
+            }
         } else {
-            pendingGateTriggers.add(gateData);
+            applyGateTileUpdates(gateData);
+            processedGateEvents.add(gateData);
         }
     }
 
@@ -2392,8 +2503,24 @@ public class GameManager {
 
             List<Tile> gateGroup = findGateGroupByEventKey(gateData);
             if (gateGroup != null) {
+                boolean hasGateTile = false;
+                for (Tile tile : gateGroup) {
+                    if (tile != null && tile.getType() == Tile.TileType.GATE) {
+                        hasGateTile = true;
+                        break;
+                    }
+                }
+
                 processedGateEvents.add(gateData);
-                player.triggerGateAnimation(gateGroup);
+                if (hasGateTile) {
+                    player.triggerGateAnimation(gateGroup);
+                } else {
+                    applyGateTileUpdates(gateData);
+                }
+                iterator.remove();
+            } else {
+                applyGateTileUpdates(gateData);
+                processedGateEvents.add(gateData);
                 iterator.remove();
             }
         }
