@@ -1388,6 +1388,7 @@ public class GameManager {
 
         interpolateOtherPlayers(deltaTime);
         updateOtherPlayerSpawnProtection(deltaTime);
+        refreshEnemyTargets();
 
         if (isHost && currentDungeon != null) {
             sendEnemyUpdatesToServer();
@@ -1439,6 +1440,7 @@ public class GameManager {
 
                     // Collision csak élő target-tel
                     if (targetPlayer != null && targetPlayer.isAlive() &&
+                            !targetPlayer.hasSpawnProtection() &&
                             collisionManager.checkCollision(targetPlayer, enemy)) {
 
                         System.out.println("👹 ENEMY-TARGET COLLISION! EnemyID: " + enemy.getId() +
@@ -1617,7 +1619,7 @@ public class GameManager {
         // ✨ CSAK élő játékosokat vegyünk figyelembe!
 
         // Saját játékos - CSAK HA ÉL
-        if (player != null && player.isAlive()) {
+        if (player != null && player.isAlive() && !player.hasSpawnProtection()) {
             float distance = calculateDistance(enemy.getX(), enemy.getY(),
                     player.getX(), player.getY());
             if (distance < closestDistance) {
@@ -1629,7 +1631,7 @@ public class GameManager {
         // Egyéb játékosok - CSAK HA ÉLNEK
         if (isMultiplayer) {
             for (Player otherPlayer : otherPlayers.values()) {
-                if (otherPlayer != null && otherPlayer.isAlive()) { // ✨ FONTOS: null check + alive check
+                if (otherPlayer != null && otherPlayer.isAlive() && !otherPlayer.hasSpawnProtection()) { // ✨ FONTOS: null check + alive check
                     float distance = calculateDistance(enemy.getX(), enemy.getY(),
                             otherPlayer.getX(), otherPlayer.getY());
                     if (distance < closestDistance) {
@@ -1686,6 +1688,9 @@ public class GameManager {
 
             Player currentTarget = enemy.getTargetPlayer();
             boolean targetInvalid = currentTarget == null || !currentTarget.isAlive();
+            if (!targetInvalid && currentTarget.hasSpawnProtection()) {
+                targetInvalid = true;
+            }
             if (!targetInvalid && deadPlayer != null) {
                 targetInvalid = currentTarget == deadPlayer;
             }
@@ -1704,6 +1709,28 @@ public class GameManager {
         }
     }
 
+    private void refreshEnemyTargets() {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        for (Enemy enemy : currentDungeon.getEnemies()) {
+            if (!enemy.isAlive()) {
+                continue;
+            }
+
+            Player currentTarget = enemy.getTargetPlayer();
+            if (currentTarget == null || !currentTarget.isAlive() || currentTarget.hasSpawnProtection()) {
+                Player newTarget = findClosestPlayerToEnemy(enemy);
+                if (newTarget != null && newTarget.isAlive()) {
+                    enemy.setTargetPlayer(newTarget);
+                } else {
+                    enemy.setTargetPlayer(null);
+                }
+            }
+        }
+    }
+
     private void updateGameplaySingleplayer(float deltaTime, double currentTime) {
         if (!player.isAlive()) {
             currentState = GameState.GAME_OVER;
@@ -1711,6 +1738,7 @@ public class GameManager {
         }
 
         player.update(deltaTime, inputHandler, collisionManager, currentTime);
+        refreshEnemyTargets();
 
         int dungeonWidthPixels = currentDungeon.getWidthTiles() * currentDungeon.getTileSize();
         int dungeonHeightPixels = currentDungeon.getHeightTiles() * currentDungeon.getTileSize();
@@ -2354,6 +2382,102 @@ public class GameManager {
         return builder.toString();
     }
 
+    private List<int[]> parseGateCoordinates(String gateData) {
+        List<int[]> coordinates = new ArrayList<>();
+        if (gateData == null || gateData.isEmpty()) {
+            return coordinates;
+        }
+
+        String[] entries = gateData.split("\\|");
+        for (String entry : entries) {
+            String[] parts = entry.split(",");
+            if (parts.length != 2) {
+                continue;
+            }
+
+            try {
+                int gridX = Integer.parseInt(parts[0]);
+                int gridY = Integer.parseInt(parts[1]);
+                coordinates.add(new int[]{gridX, gridY});
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return coordinates;
+    }
+
+    private void applyGateTileUpdates(String gateData) {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        List<int[]> coordinates = parseGateCoordinates(gateData);
+        if (coordinates.isEmpty()) {
+            return;
+        }
+
+        Map<Tile.TileType, Texture> textureMap = tileTextures;
+        Set<Long> coordinateKeys = new HashSet<>();
+
+        for (int[] coord : coordinates) {
+            if (coord == null || coord.length < 2) {
+                continue;
+            }
+
+            int gridX = coord[0];
+            int gridY = coord[1];
+
+            if (gridX < 0 || gridY < 0 ||
+                    gridX >= currentDungeon.getWidthTiles() ||
+                    gridY >= currentDungeon.getHeightTiles()) {
+                continue;
+            }
+
+            long key = (((long) gridX) << 32) | (gridY & 0xffffffffL);
+            coordinateKeys.add(key);
+
+            Tile tile = currentDungeon.getTiles()[gridX][gridY];
+            if (tile == null) {
+                continue;
+            }
+
+            tile.setType(Tile.TileType.FLOOR);
+            if (textureMap != null && textureMap.containsKey(Tile.TileType.FLOOR)) {
+                tile.setTexture(textureMap.get(Tile.TileType.FLOOR));
+            }
+            tile.setIsCollidable(false);
+        }
+
+        if (coordinateKeys.isEmpty() || currentDungeon.gateCorridorGroups == null) {
+            return;
+        }
+
+        Iterator<List<Tile>> iterator = currentDungeon.gateCorridorGroups.iterator();
+        while (iterator.hasNext()) {
+            List<Tile> group = iterator.next();
+            if (group == null || group.isEmpty()) {
+                continue;
+            }
+
+            boolean matches = true;
+            for (Tile tile : group) {
+                if (tile == null) {
+                    continue;
+                }
+
+                long key = (((long) tile.getGridX()) << 32) | (tile.getGridY() & 0xffffffffL);
+                if (!coordinateKeys.contains(key)) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches) {
+                iterator.remove();
+            }
+        }
+    }
+
     private void handleGateTriggerMessage(String gateData) {
         if (gateData == null || gateData.isEmpty()) {
             return;
@@ -2365,15 +2489,29 @@ public class GameManager {
         }
 
         if (processedGateEvents.contains(gateData)) {
+            applyGateTileUpdates(gateData);
             return;
         }
 
         List<Tile> gateGroup = findGateGroupByEventKey(gateData);
         if (gateGroup != null) {
+            boolean hasGateTile = false;
+            for (Tile tile : gateGroup) {
+                if (tile != null && tile.getType() == Tile.TileType.GATE) {
+                    hasGateTile = true;
+                    break;
+                }
+            }
+
             processedGateEvents.add(gateData);
-            player.triggerGateAnimation(gateGroup);
+            if (hasGateTile) {
+                player.triggerGateAnimation(gateGroup);
+            } else {
+                applyGateTileUpdates(gateData);
+            }
         } else {
-            pendingGateTriggers.add(gateData);
+            applyGateTileUpdates(gateData);
+            processedGateEvents.add(gateData);
         }
     }
 
@@ -2392,8 +2530,24 @@ public class GameManager {
 
             List<Tile> gateGroup = findGateGroupByEventKey(gateData);
             if (gateGroup != null) {
+                boolean hasGateTile = false;
+                for (Tile tile : gateGroup) {
+                    if (tile != null && tile.getType() == Tile.TileType.GATE) {
+                        hasGateTile = true;
+                        break;
+                    }
+                }
+
                 processedGateEvents.add(gateData);
-                player.triggerGateAnimation(gateGroup);
+                if (hasGateTile) {
+                    player.triggerGateAnimation(gateGroup);
+                } else {
+                    applyGateTileUpdates(gateData);
+                }
+                iterator.remove();
+            } else {
+                applyGateTileUpdates(gateData);
+                processedGateEvents.add(gateData);
                 iterator.remove();
             }
         }
@@ -3064,8 +3218,15 @@ public class GameManager {
         //float spawnX = currentDungeon != null ? currentDungeon.getPlayerSpawnX() : playerState.getX();
         //float spawnY = currentDungeon != null ? currentDungeon.getPlayerSpawnY() : playerState.getY();
 
+        float spawnX = playerState.getX();
+        float spawnY = playerState.getY();
+        if (currentDungeon != null) {
+            spawnX = currentDungeon.getPlayerSpawnX();
+            spawnY = currentDungeon.getPlayerSpawnY();
+        }
+
         Player otherPlayer = new Player(
-                playerState.getX(), playerState.getY(),
+                spawnX, spawnY,
                 50, 50, playerIdleTexture, window, weaponFactory,
                 tileTextures.get(Tile.TileType.FLOOR), textRenderer
         );
@@ -3222,31 +3383,8 @@ public class GameManager {
                 Player otherPlayer = otherPlayers.get(playerId);
                 switch (action) {
                     case "SHOOT":
-                        WeaponInterface weapon = otherPlayer.getCurrentWeapon();
-                        if (weapon instanceof Weapon) {
-                            // Számoljuk ki az irányvektort a célpont alapján
-                            float dx = x - otherPlayer.getX();
-                            float dy = y - otherPlayer.getY();
-                            float magnitude = (float) Math.sqrt(dx * dx + dy * dy);
-                            float dirX = magnitude > 0 ? dx / magnitude : 0;
-                            float dirY = magnitude > 0 ? dy / magnitude : 0;
-                            float speed = 300.0f; // Alapértelmezett sebesség
-                            float damage = weapon.getBaseDamage(); // Fegyver sebzése
-                            Projectile projectile = new Projectile(
-                                    otherPlayer.getX(),
-                                    otherPlayer.getY(),
-                                    10, // Példa szélesség
-                                    10, // Példa magasság
-                                    damage,
-                                    speed,
-                                    dirX,
-                                    dirY,
-                                    otherPlayer
-                            );
-                            projectile.setId(projectiles.size() + 1); // Egyszerű ID kiosztás
-                            projectiles.add(projectile);
-                            //System.out.println("🔫 Player " + playerId + " shot a projectile");
-                        }
+                        // A lövedékeket a szerver PROJECTILE_CREATED üzenetei hozzák létre,
+                        // itt elegendő az animációkat kezelni (ha szükséges).
                         break;
                     case "MELEE":
                         if (otherPlayer.getCurrentWeapon() instanceof MeleeWeapon) {
@@ -3322,6 +3460,16 @@ public class GameManager {
 
         try {
             int eliminatedPlayerId = Integer.parseInt(data.trim());
+            if (eliminatedPlayerId == myPlayerId) {
+                if (player != null) {
+                    player.setAlive(false);
+                }
+            } else {
+                Player eliminated = otherPlayers.get(eliminatedPlayerId);
+                if (eliminated != null) {
+                    eliminated.setAlive(false);
+                }
+            }
             forceEnemyRetarget(eliminatedPlayerId);
         } catch (NumberFormatException ignored) {
         }
