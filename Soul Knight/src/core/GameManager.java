@@ -99,6 +99,7 @@ public class GameManager {
     private List<Projectile> projectiles;
     private List<Effect> effects;
     private List<PlayerEffect> playerEffects;
+    private Map<Integer, List<PlayerEffect>> remotePlayerEffects;
 
     private Map<Integer, Effect> activeEffectsById;
     private int nextEffectId = 1;
@@ -367,6 +368,8 @@ public class GameManager {
                 textRenderer
         );
 
+        player.activateSpawnProtection();
+
         applyDifficultyToEnemies();
 
         setupPlayerDamageListener(player);
@@ -394,6 +397,7 @@ public class GameManager {
         projectiles = new ArrayList<>();
         effects = new ArrayList<>();
         playerEffects = new ArrayList<>();
+        remotePlayerEffects = new HashMap<>();
 
         currentState = GameState.GAMEPLAY;
         glfwSetCharCallback(window, null);
@@ -592,6 +596,9 @@ public class GameManager {
         }
         if (playerEffects == null) {
             playerEffects = new ArrayList<>();
+        }
+        if (remotePlayerEffects == null) {
+            remotePlayerEffects = new HashMap<>();
         }
 
         System.out.println("✅ Multiplayer gameplay resources initialized - " +
@@ -877,6 +884,8 @@ public class GameManager {
                 textRenderer
         );
 
+        player.activateSpawnProtection();
+
         setupPlayerDamageListener(player);
         setupPlayerGateListener(player);
 
@@ -903,6 +912,7 @@ public class GameManager {
         projectiles = new ArrayList<>();
         effects = new ArrayList<>();
         playerEffects = new ArrayList<>();
+        remotePlayerEffects = new HashMap<>();
 
         // ✨ FONTOS: Állapot beállítása - DE Client maradjon ABILITY_SELECTION-ben
         // currentState = GameState.GAMEPLAY; // ← EZT TÁVOLÍTSD EL!
@@ -983,6 +993,11 @@ public class GameManager {
             playerEffects.clear();
         } else {
             playerEffects = new ArrayList<>();
+        }
+        if (remotePlayerEffects != null) {
+            remotePlayerEffects.clear();
+        } else {
+            remotePlayerEffects = new HashMap<>();
         }
         processedGateEvents.clear();
         pendingGateTriggers.clear();
@@ -1372,6 +1387,7 @@ public class GameManager {
         sendPlayerInputToServer();
 
         interpolateOtherPlayers(deltaTime);
+        updateOtherPlayerSpawnProtection(deltaTime);
 
         if (isHost && currentDungeon != null) {
             sendEnemyUpdatesToServer();
@@ -1457,6 +1473,7 @@ public class GameManager {
 
         // Interpoláld a többi játékost
         interpolateOtherPlayers(deltaTime);
+        updateOtherPlayerSpawnProtection(deltaTime);
 
         // Kamera - UGYANAZ
         int dungeonWidthPixels = currentDungeon.getWidthTiles() * currentDungeon.getTileSize();
@@ -2215,6 +2232,7 @@ public class GameManager {
         );
 
         player.setId(myPlayerId);
+        player.activateSpawnProtection();
 
         setupPlayerDamageListener(player);
         setupPlayerGateListener(player);
@@ -2538,6 +2556,7 @@ public class GameManager {
             player.setX(currentDungeon.getPlayerSpawnX());
             player.setY(currentDungeon.getPlayerSpawnY());
             player.setDungeon(currentDungeon); // ✨ FONTOS: dungeon beállítása
+            player.activateSpawnProtection();
 
 //            System.out.println("   - After: " + player.getX() + ", " + player.getY());
 
@@ -2994,6 +3013,7 @@ public class GameManager {
         // így a későbbi interpoláció simán tudja követni a mozgást.
         if (Math.abs(otherPlayer.getX() - newX) > 200f || Math.abs(otherPlayer.getY() - newY) > 200f) {
             otherPlayer.applyNetworkMovement(newX, newY, 0f);
+            otherPlayer.activateSpawnProtection();
         }
     }
 
@@ -3027,6 +3047,18 @@ public class GameManager {
         return current + (target - current) * Math.min(factor, 1.0f);
     }
 
+    private void updateOtherPlayerSpawnProtection(float deltaTime) {
+        if (!isMultiplayer || otherPlayers.isEmpty()) {
+            return;
+        }
+
+        for (Player otherPlayer : otherPlayers.values()) {
+            if (otherPlayer != null) {
+                otherPlayer.tickSpawnProtection(deltaTime);
+            }
+        }
+    }
+
     private Player createOtherPlayer(PlayerState playerState) {
         // ✨ JAVÍTOTT: Ha van dungeon, használjuk a spawn pozíciót
         //float spawnX = currentDungeon != null ? currentDungeon.getPlayerSpawnX() : playerState.getX();
@@ -3043,6 +3075,7 @@ public class GameManager {
         otherPlayer.setTargetY(playerState.getY());
         otherPlayer.setDungeon(currentDungeon); // ✨ FONTOS: DUNGEON BEÁLLÍTÁSA
         otherPlayer.setId(playerState.getPlayerId());
+        otherPlayer.activateSpawnProtection();
 
         if (walkFrames != null && !walkFrames.isEmpty()) {
             otherPlayer.setSprites(new Sprite(walkFrames, 0.1f, true));
@@ -3058,6 +3091,8 @@ public class GameManager {
         } catch (Exception e) {
             otherPlayer.setAbility(Player.Ability.SPEED);
         }
+
+        otherPlayer.setWeapon(weaponFactory.createWeapon("pistol"), "pistol");
 
         //System.out.println("✅ OTHER PLAYER CREATED: " + playerState.getPlayerName() +
                 //" at " + spawnX + ", " + spawnY);
@@ -3099,6 +3134,12 @@ public class GameManager {
         if (otherPlayers.containsKey(playerId)) {
             otherPlayers.remove(playerId);
         }
+
+        if (remotePlayerEffects != null) {
+            remotePlayerEffects.remove(playerId);
+        }
+
+        forceEnemyRetarget(playerId);
     }
 
     private void handlePlayerPositionUpdate(String data) {
@@ -3910,8 +3951,8 @@ public class GameManager {
             playerEffects.clear();
         }
 
-        if (playerEffects != null) {
-            playerEffects.clear();
+        if (remotePlayerEffects != null) {
+            remotePlayerEffects.clear();
         }
     }
 
@@ -4422,13 +4463,7 @@ public class GameManager {
     }
 
     private void applyEffectToPlayer(Effect.EffectType type, Player target) {
-        if (target == null || type == null) {
-            return;
-        }
-
-        if (target == player) {
-            applyEffect(type);
-        }
+        applyEffectInternal(target, type);
     }
 
     private void advanceDifficultyScaling() {
@@ -4518,33 +4553,94 @@ public class GameManager {
     }
 
     private void applyEffect(Effect.EffectType type) {
+        applyEffectInternal(player, type);
+    }
+
+    private void applyEffectInternal(Player target, Effect.EffectType type) {
+        if (target == null || type == null) {
+            return;
+        }
+
+        boolean isLocalPlayer = target == player;
+        List<PlayerEffect> effectList = null;
+
+        if (isLocalPlayer) {
+            if (playerEffects == null) {
+                playerEffects = new ArrayList<>();
+            }
+            effectList = playerEffects;
+        } else {
+            if (remotePlayerEffects == null) {
+                remotePlayerEffects = new HashMap<>();
+            }
+            if (target.getId() >= 0) {
+                effectList = remotePlayerEffects.computeIfAbsent(target.getId(), id -> new ArrayList<>());
+            }
+        }
+
         switch (type) {
             case SPEED_BOOST:
-                player.setMoveSpeed(player.getBaseMoveSpeed() * 1.5f);
-                playerEffects.add(new PlayerEffect(Effect.EffectType.SPEED_BOOST, 5.0f));
+                target.setMoveSpeed(target.getBaseMoveSpeed() * 1.5f);
+                if (effectList != null) {
+                    effectList.add(new PlayerEffect(Effect.EffectType.SPEED_BOOST, 5.0f));
+                }
                 break;
             case DAMAGE_BOOST:
-                player.setDamage(player.getCurrentWeapon().getBaseDamage() * 2.0f);
-                playerEffects.add(new PlayerEffect(Effect.EffectType.DAMAGE_BOOST, 8.0f));
+                if (target.getCurrentWeapon() != null) {
+                    target.setDamage(target.getCurrentWeapon().getBaseDamage() * 2.0f);
+                }
+                if (effectList != null) {
+                    effectList.add(new PlayerEffect(Effect.EffectType.DAMAGE_BOOST, 8.0f));
+                }
                 break;
             case HEALTH_REGEN:
-                player.heal(50);
+                target.heal(50);
                 break;
         }
     }
 
     private void updatePlayerEffects(float deltaTime) {
-        Iterator<PlayerEffect> iterator = playerEffects.iterator();
+        updatePlayerEffectList(player, playerEffects, deltaTime);
+
+        if (remotePlayerEffects == null || remotePlayerEffects.isEmpty()) {
+            return;
+        }
+
+        Iterator<Map.Entry<Integer, List<PlayerEffect>>> mapIterator = remotePlayerEffects.entrySet().iterator();
+        while (mapIterator.hasNext()) {
+            Map.Entry<Integer, List<PlayerEffect>> entry = mapIterator.next();
+            Player target = otherPlayers.get(entry.getKey());
+            if (target == null) {
+                mapIterator.remove();
+                continue;
+            }
+
+            List<PlayerEffect> effectsForPlayer = entry.getValue();
+            updatePlayerEffectList(target, effectsForPlayer, deltaTime);
+            if (effectsForPlayer == null || effectsForPlayer.isEmpty()) {
+                mapIterator.remove();
+            }
+        }
+    }
+
+    private void updatePlayerEffectList(Player target, List<PlayerEffect> effectsList, float deltaTime) {
+        if (target == null || effectsList == null) {
+            return;
+        }
+
+        Iterator<PlayerEffect> iterator = effectsList.iterator();
         while (iterator.hasNext()) {
             PlayerEffect effect = iterator.next();
             effect.duration -= deltaTime;
-            if (effect.duration <= 0) {
+            if (effect.duration <= 0f) {
                 switch (effect.type) {
                     case SPEED_BOOST:
-                        player.setMoveSpeed(player.getBaseMoveSpeed());
+                        target.setMoveSpeed(target.getBaseMoveSpeed());
                         break;
                     case DAMAGE_BOOST:
-                        player.setDamage(player.getCurrentWeapon().getBaseDamage());
+                        if (target.getCurrentWeapon() != null) {
+                            target.setDamage(target.getCurrentWeapon().getBaseDamage());
+                        }
                         break;
                     default:
                         break;
