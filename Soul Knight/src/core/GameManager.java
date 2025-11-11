@@ -129,7 +129,8 @@ public class GameManager {
     private String playerName;
     private int saveIdToLoad = -1;
     private float lastRangedAttackTime = Float.NEGATIVE_INFINITY;
-    private final float RANGED_COOLDOWN = 0.3f; // Másodperc
+    private final float RANGED_COOLDOWN = 0.45f; // Másodperc
+    private final float RANGED_PROJECTILE_SPEED = 240.0f;
     private boolean projectileSentThisFrame = false;
     private float enemySyncTimer = 0f;
     private final float ENEMY_SYNC_INTERVAL = 0.1f;
@@ -2081,6 +2082,8 @@ public class GameManager {
                             player.setX(currentDungeon.getPlayerSpawnX());
                             player.setY(currentDungeon.getPlayerSpawnY());
                             player.setDungeon(currentDungeon);
+                            player.activateSpawnProtection();
+                            announceSpawnStateToServer();
                         }
 
                         currentState = GameState.GAMEPLAY;
@@ -2261,6 +2264,7 @@ public class GameManager {
 
         player.setId(myPlayerId);
         player.activateSpawnProtection();
+        announceSpawnStateToServer();
 
         setupPlayerDamageListener(player);
         setupPlayerGateListener(player);
@@ -2638,7 +2642,7 @@ public class GameManager {
     }
 
     private void sendPlayerDamageUpdate(Player damagedPlayer, float damageAmount, float newHealth, boolean isAlive) {
-        if (multiplayerClient == null) {
+        if (multiplayerClient == null || !multiplayerClient.isConnected()) {
             return;
         }
 
@@ -2657,6 +2661,18 @@ public class GameManager {
         }
 
         multiplayerClient.sendPlayerDamage(damagedPlayerId, damagedPlayerName, damageAmount, newHealth, isAlive);
+    }
+
+    private void announceSpawnStateToServer() {
+        if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected() || player == null) {
+            return;
+        }
+
+        player.setHealth(player.getMaxHealth());
+        player.setAlive(true);
+
+        multiplayerClient.sendPlayerPosition(player.getX(), player.getY());
+        sendPlayerDamageUpdate(player, 0f, player.getHealth(), true);
     }
 
     private void generateDungeonWithSeed(long seed) {
@@ -2711,6 +2727,7 @@ public class GameManager {
             player.setY(currentDungeon.getPlayerSpawnY());
             player.setDungeon(currentDungeon); // ✨ FONTOS: dungeon beállítása
             player.activateSpawnProtection();
+            announceSpawnStateToServer();
 
 //            System.out.println("   - After: " + player.getX() + ", " + player.getY());
 
@@ -2789,8 +2806,8 @@ public class GameManager {
             magnitude = 1.0f; // Default érték
         }
 
-        float velocityX = (dx / magnitude) * 300.0f;
-        float velocityY = (dy / magnitude) * 300.0f;
+        float velocityX = (dx / magnitude) * RANGED_PROJECTILE_SPEED;
+        float velocityY = (dy / magnitude) * RANGED_PROJECTILE_SPEED;
 
         float damage = weapon.getDamage();
 
@@ -3420,6 +3437,11 @@ public class GameManager {
                 System.out.println("💥 SAJÁT SEBZÉS FRISSÍTÉS: " + newHealth + " HP");
 
                 if (player != null) {
+                    if (player.hasSpawnProtection() && newHealth < player.getHealth()) {
+                        System.out.println("🛡️ Ignoring damage while spawn protection is active. Reasserting spawn state.");
+                        announceSpawnStateToServer();
+                        return;
+                    }
                     player.setHealth(newHealth);
                     player.setAlive(isAlive);
 
@@ -4357,7 +4379,7 @@ public class GameManager {
 
             float dirX = dx / distance;
             float dirY = dy / distance;
-            float speed = 300.0f;
+            float speed = RANGED_PROJECTILE_SPEED;
             float damage = weapon.getDamage();
 
             //System.out.println("🎯 Irány: " + dirX + ", " + dirY);
