@@ -33,6 +33,7 @@ public class MultiplayerGameServer {
     private Map<Integer, ProjectileState> activeProjectiles = new ConcurrentHashMap<>();
     private Set<Integer> activeEffectIds = ConcurrentHashMap.newKeySet();
     private Set<Integer> consumedEffectIds = ConcurrentHashMap.newKeySet();
+    private Set<String> triggeredGateEvents = ConcurrentHashMap.newKeySet();
 
     private volatile boolean hostControlsEnemies = false;
     private volatile long lastHostEnemySync = 0L;
@@ -235,6 +236,7 @@ public class MultiplayerGameServer {
                     if (data.startsWith("DUNGEON_SEED:")) {
                         activeEffectIds.clear();
                         consumedEffectIds.clear();
+                        triggeredGateEvents.clear();
                     }
                 }
                 break;
@@ -287,22 +289,52 @@ public class MultiplayerGameServer {
     private void handleEnemyDamage(String data) {
         try {
             String[] parts = data.split(":");
+            if (parts.length < 4) {
+                System.err.println("❌ Invalid ENEMY_DAMAGE data: " + data);
+                return;
+            }
             int enemyId = Integer.parseInt(parts[0]);
             float damage = Float.parseFloat(parts[1]);
-            float newHealth = Float.parseFloat(parts[2]);
-            boolean isAlive = Boolean.parseBoolean(parts[3]);
+            float reportedHealth = Float.parseFloat(parts[2]);
+            boolean clientAliveFlag = Boolean.parseBoolean(parts[3]);
 
-            // Update enemy state
-            for (EnemyState enemy : gameState.getEnemyStates()) {
-                if (enemy.getEnemyId() == enemyId) {
-                    enemy.setHealth(newHealth);
-                    enemy.setAlive(isAlive);
-                    break;
-                }
+            EnemyState enemyState = gameState.getEnemyState(enemyId);
+
+            if (enemyState == null) {
+                // Ha a szerver még nem ismeri az enemy-t, hozzunk létre egy alap állapotot
+                float initialHealth = Math.max(reportedHealth + damage, damage);
+                enemyState = new EnemyState(enemyId, "UNKNOWN", 0f, 0f, initialHealth, initialHealth);
+                gameState.addEnemyState(enemyState);
             }
 
-            // Broadcast to all clients
-            broadcastUDPToAll("ENEMY_DAMAGE:" + data);
+            float currentHealth = enemyState.getHealth();
+            if (currentHealth <= 0f) {
+                // Ha a szerver állapota még nem frissült, használjuk a kliens jelentését kiindulásnak
+                currentHealth = Math.max(reportedHealth + damage, damage);
+            }
+
+            float newHealth = Math.max(0f, currentHealth - Math.max(0f, damage));
+            boolean isAlive = newHealth > 0f;
+
+            if (!isAlive && clientAliveFlag) {
+                System.out.println("⚠️ ENEMY_DAMAGE korrigálva: kliens még élőnek jelölte az ellenséget (" + enemyId + ")");
+            }
+
+            enemyState.setHealth(newHealth);
+            enemyState.setAlive(isAlive);
+
+            if (newHealth > enemyState.getMaxHealth()) {
+                enemyState.setMaxHealth(newHealth);
+            }
+
+            // Broadcast to all clients a szerver által hitelesített életerővel
+            String broadcastData = String.format(Locale.US, "%d:%.2f:%.2f:%b",
+                    enemyId,
+                    damage,
+                    newHealth,
+                    isAlive);
+
+            broadcastUDPToAll("ENEMY_DAMAGE:" + broadcastData);
 
         } catch (Exception e) {
             System.err.println("❌ Error handling enemy damage: " + e.getMessage());
@@ -592,6 +624,12 @@ public class MultiplayerGameServer {
                     sharedSpawnX,
                     sharedSpawnY));
 
+            if (!triggeredGateEvents.isEmpty()) {
+                for (String gateEvent : triggeredGateEvents) {
+                    sendTCPResponse(session.getClientSocket(), "GATE_TRIGGER:" + gateEvent);
+                }
+            }
+
             //System.out.println("📤 Sent PLAYER_JOINED: " + session.getPlayerId() + ":" + playerName + ":" + playerAbility);
 
             // ✨ HA MINDENKI CSATLAKOZOTT, KÜLDJÜK A DUNGEON SEED-ET
@@ -652,6 +690,7 @@ public class MultiplayerGameServer {
         gameState.getEnemyStates().clear(); // Ürítsük ki a régi ellenségeket
         activeEffectIds.clear();
         consumedEffectIds.clear();
+        triggeredGateEvents.clear();
         hostControlsEnemies = false;
         lastHostEnemySync = 0L;
 
@@ -1223,6 +1262,7 @@ public class MultiplayerGameServer {
             return;
         }
 
+        triggeredGateEvents.add(gateData);
         broadcastTCPMessage("GATE_TRIGGER:" + gateData);
     }
 

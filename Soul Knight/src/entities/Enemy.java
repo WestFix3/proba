@@ -17,6 +17,7 @@ public class Enemy extends Entity {
     private int id;
 
     private float health;
+    private boolean alive = true;
     protected float maxHealth;
     private Texture texture;
     protected float moveSpeed = 50.0f;
@@ -604,8 +605,14 @@ public class Enemy extends Entity {
     }
 
     public void takeDamage(float damage) {
+        if (!alive) {
+            return;
+        }
+
         this.health -= damage;
         if (this.health <= 0) {
+            this.health = 0;
+            this.alive = false;
             System.out.println("Enemy died!");
         }
     }
@@ -616,7 +623,7 @@ public class Enemy extends Entity {
     }
 
     public boolean isAlive() {
-        return health > 0;
+        return alive && health > 0f;
     }
 
     public float getHealth() {
@@ -876,6 +883,7 @@ public class Enemy extends Entity {
 
         // CSAK A LÉNYEGES ÁLLAPOTOK
         clone.health = this.health;
+        clone.alive = this.alive;
         clone.moveSpeed = this.moveSpeed;
         clone.attackDamage = this.attackDamage;
         clone.baseMoveSpeed = this.baseMoveSpeed;
@@ -907,7 +915,8 @@ public class Enemy extends Entity {
     }
 
     public void setHealth(float health) {
-        this.health = health;
+        this.health = Math.max(0f, health);
+        this.alive = this.health > 0f;
     }
 
     // ÚJ: Setter metódus a maximális HP beállításához
@@ -938,7 +947,10 @@ public class Enemy extends Entity {
     }
 
     public void setAlive(boolean alive) {
-        this.health = alive ? this.maxHealth : 0;
+        this.alive = alive;
+        if (!alive) {
+            this.health = 0f;
+        }
     }
 
     public void setNetworkControlled(boolean controlled) {
