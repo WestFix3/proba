@@ -33,6 +33,7 @@ public class MultiplayerGameServer {
     private Map<Integer, ProjectileState> activeProjectiles = new ConcurrentHashMap<>();
     private Set<Integer> activeEffectIds = ConcurrentHashMap.newKeySet();
     private Set<Integer> consumedEffectIds = ConcurrentHashMap.newKeySet();
+    private Set<String> triggeredGateEvents = ConcurrentHashMap.newKeySet();
 
     private volatile boolean hostControlsEnemies = false;
     private volatile long lastHostEnemySync = 0L;
@@ -235,6 +236,7 @@ public class MultiplayerGameServer {
                     if (data.startsWith("DUNGEON_SEED:")) {
                         activeEffectIds.clear();
                         consumedEffectIds.clear();
+                        triggeredGateEvents.clear();
                     }
                 }
                 break;
@@ -622,6 +624,12 @@ public class MultiplayerGameServer {
                     sharedSpawnX,
                     sharedSpawnY));
 
+            if (!triggeredGateEvents.isEmpty()) {
+                for (String gateEvent : triggeredGateEvents) {
+                    sendTCPResponse(session.getClientSocket(), "GATE_TRIGGER:" + gateEvent);
+                }
+            }
+
             //System.out.println("📤 Sent PLAYER_JOINED: " + session.getPlayerId() + ":" + playerName + ":" + playerAbility);
 
             // ✨ HA MINDENKI CSATLAKOZOTT, KÜLDJÜK A DUNGEON SEED-ET
@@ -682,6 +690,7 @@ public class MultiplayerGameServer {
         gameState.getEnemyStates().clear(); // Ürítsük ki a régi ellenségeket
         activeEffectIds.clear();
         consumedEffectIds.clear();
+        triggeredGateEvents.clear();
         hostControlsEnemies = false;
         lastHostEnemySync = 0L;
 
@@ -1253,6 +1262,7 @@ public class MultiplayerGameServer {
             return;
         }
 
+        triggeredGateEvents.add(gateData);
         broadcastTCPMessage("GATE_TRIGGER:" + gateData);
     }
 

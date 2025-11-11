@@ -101,6 +101,9 @@ public class Player extends Entity {
     private TextRenderer textRenderer;
     private TextRenderer nameRenderer;
 
+    private static final float SPAWN_PROTECTION_DURATION = 1.5f;
+    private float spawnProtectionTimer = 0f;
+
     private float healthBoost = 0f;
     private float damageBoost = 0f;
     private float critChanceBoost = 0f;
@@ -315,6 +318,8 @@ public class Player extends Entity {
                 currentTime = (Double) arg;
             }
         }
+
+        tickSpawnProtection(deltaTime);
 
         if (inputHandler == null) return;
 
@@ -547,6 +552,10 @@ public class Player extends Entity {
     }
 
     public void takeDamage(float amount) {
+        if (spawnProtectionTimer > 0f) {
+            return;
+        }
+
         float effectiveDamage = amount;
 
         if (isAbilityActive) {
@@ -720,6 +729,20 @@ public class Player extends Entity {
         this.health = clampedHealth;
         if (this.health <= 0f) {
             this.isWalking = false;
+        }
+    }
+
+    public void activateSpawnProtection() {
+        this.spawnProtectionTimer = SPAWN_PROTECTION_DURATION;
+    }
+
+    public boolean hasSpawnProtection() {
+        return spawnProtectionTimer > 0f;
+    }
+
+    public void tickSpawnProtection(float deltaTime) {
+        if (spawnProtectionTimer > 0f) {
+            spawnProtectionTimer = Math.max(0f, spawnProtectionTimer - deltaTime);
         }
     }
 
