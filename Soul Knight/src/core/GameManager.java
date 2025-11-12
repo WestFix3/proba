@@ -1641,8 +1641,12 @@ public class GameManager {
         Player closestPlayer = null;
         float closestDistance = Float.MAX_VALUE;
 
-        if (player != null && player.isAlive() && (ignoreSpawnProtection || !player.hasSpawnProtection())) {
-            float distance = calculateDistance(enemy.getX(), enemy.getY(), player.getX(), player.getY());
+        // ✨ CSAK élő játékosokat vegyünk figyelembe!
+
+        // Saját játékos - CSAK HA ÉL
+        if (player != null && player.isAlive() && !player.hasSpawnProtection()) {
+            float distance = calculateDistance(enemy.getX(), enemy.getY(),
+                    player.getX(), player.getY());
             if (distance < closestDistance) {
                 closestDistance = distance;
                 closestPlayer = player;
@@ -1650,19 +1654,14 @@ public class GameManager {
         }
 
         if (isMultiplayer) {
-            for (Map.Entry<Integer, Player> entry : otherPlayers.entrySet()) {
-                Player otherPlayer = entry.getValue();
-                if (otherPlayer == null || !otherPlayer.isAlive()) {
-                    continue;
-                }
-                if (!ignoreSpawnProtection && otherPlayer.hasSpawnProtection()) {
-                    continue;
-                }
-
-                float distance = calculateDistance(enemy.getX(), enemy.getY(), otherPlayer.getX(), otherPlayer.getY());
-                if (distance < closestDistance) {
-                    closestDistance = distance;
-                    closestPlayer = otherPlayer;
+            for (Player otherPlayer : otherPlayers.values()) {
+                if (otherPlayer != null && otherPlayer.isAlive() && !otherPlayer.hasSpawnProtection()) { // ✨ FONTOS: null check + alive check
+                    float distance = calculateDistance(enemy.getX(), enemy.getY(),
+                            otherPlayer.getX(), otherPlayer.getY());
+                    if (distance < closestDistance) {
+                        closestDistance = distance;
+                        closestPlayer = otherPlayer;
+                    }
                 }
             }
         }
@@ -2621,48 +2620,6 @@ public class GameManager {
         multiplayerClient.sendTCPMessage("TILE_UPDATE:" + message);
     }
 
-    private boolean isRemoteHostActive() {
-        if (!isMultiplayer || isHost) {
-            return false;
-        }
-
-        if (hostPlayerId < 0) {
-            return multiplayerClient != null && multiplayerClient.isConnected();
-        }
-
-        if (!hostPresent) {
-            return false;
-        }
-
-        if (hostPlayerId == myPlayerId) {
-            return player != null && player.isAlive();
-        }
-
-        Player hostPlayer = otherPlayers.get(hostPlayerId);
-        if (hostPlayer != null) {
-            return hostPlayer.isAlive();
-        }
-
-        return hostAlive;
-    }
-
-    private int determineFallbackAuthority() {
-        int fallbackId = Integer.MAX_VALUE;
-
-        if (player != null && player.isAlive() && myPlayerId >= 0) {
-            fallbackId = Math.min(fallbackId, myPlayerId);
-        }
-
-        for (Map.Entry<Integer, Player> entry : otherPlayers.entrySet()) {
-            Player candidate = entry.getValue();
-            if (candidate != null && candidate.isAlive()) {
-                fallbackId = Math.min(fallbackId, entry.getKey());
-            }
-        }
-
-        return fallbackId == Integer.MAX_VALUE ? -1 : fallbackId;
-    }
-
     private boolean hasSharedWorldAuthority() {
         if (!isMultiplayer) {
             return true;
@@ -2672,16 +2629,7 @@ public class GameManager {
             return true;
         }
 
-        if (multiplayerClient == null || !multiplayerClient.isConnected()) {
-            return true;
-        }
-
-        if (isRemoteHostActive()) {
-            return false;
-        }
-
-        int fallbackAuthority = determineFallbackAuthority();
-        return fallbackAuthority >= 0 && fallbackAuthority == myPlayerId;
+        return multiplayerClient == null || !multiplayerClient.isConnected();
     }
 
     private void handleTileUpdate(String data) {
@@ -3607,16 +3555,10 @@ public class GameManager {
                 if (player != null) {
                     player.setAlive(false);
                 }
-                if (isHost) {
-                    hostAlive = false;
-                }
             } else {
                 Player eliminated = otherPlayers.get(eliminatedPlayerId);
                 if (eliminated != null) {
                     eliminated.setAlive(false);
-                }
-                if (eliminatedPlayerId == hostPlayerId) {
-                    hostAlive = false;
                 }
             }
             forceEnemyRetarget(eliminatedPlayerId);

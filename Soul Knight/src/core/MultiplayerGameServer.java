@@ -1323,6 +1323,10 @@ public class MultiplayerGameServer {
                 continue;
             }
 
+            if (excludeSession != null && targetSession.getPlayerId() == excludeSession.getPlayerId()) {
+                continue;
+            }
+
             sendGateTileUpdatesToSession(targetSession, gateTiles);
         }
     }
