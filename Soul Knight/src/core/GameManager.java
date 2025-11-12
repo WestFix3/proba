@@ -1450,6 +1450,14 @@ public class GameManager {
                         float damage = enemy.getAttackDamage();
                         targetPlayer.takeDamage(damage);
 
+                        if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                            boolean isLocalPlayer = targetPlayer == player ||
+                                    (targetPlayer.getId() >= 0 && targetPlayer.getId() == myPlayerId);
+                            if (!isLocalPlayer) {
+                                sendPlayerDamageUpdate(targetPlayer, damage, targetPlayer.getHealth(), targetPlayer.isAlive());
+                            }
+                        }
+
                         if (!targetPlayer.isAlive()) {
                             int defeatedPlayerId = targetPlayer.getId();
                             if (defeatedPlayerId < 0 && targetPlayer == player) {
@@ -1534,13 +1542,15 @@ public class GameManager {
             int minCheckY = Math.max(0, projGridY - 1);
             int maxCheckY = Math.min(currentDungeon.getHeightTiles() - 1, projGridY + 1);
 
+            boolean canAffectWorld = hasSharedWorldAuthority();
+
             for (int x = minCheckX; x <= maxCheckX; x++) {
                 for (int y = minCheckY; y <= maxCheckY; y++) {
                     Tile tile = currentDungeon.getTiles()[x][y];
                     if (tile != null && tile.isSolid()) {
                         if (collisionManager.checkTileCollision(projectile, tile, x, y)) {
                             projectile.setAlive(false);
-                            if (tile.getType() == Tile.TileType.BOX) {
+                            if (tile.getType() == Tile.TileType.BOX && canAffectWorld) {
                                 tile.takeDamage(1);
                                 boolean destroyed = tile.isDestroyed();
 
@@ -1792,13 +1802,15 @@ public class GameManager {
             int minCheckY = Math.max(0, projGridY - 1);
             int maxCheckY = Math.min(currentDungeon.getHeightTiles() - 1, projGridY + 1);
 
+            boolean canAffectWorld = hasSharedWorldAuthority();
+
             for (int x = minCheckX; x <= maxCheckX; x++) {
                 for (int y = minCheckY; y <= maxCheckY; y++) {
                     Tile tile = currentDungeon.getTiles()[x][y];
                     if (tile != null && tile.isSolid()) {
                         if (collisionManager.checkTileCollision(projectile, tile, x, y)) {
                             projectile.setAlive(false);
-                            if (tile.getType() == Tile.TileType.BOX) {
+                            if (tile.getType() == Tile.TileType.BOX && canAffectWorld) {
                                 tile.takeDamage(1);
                                 boolean destroyed = tile.isDestroyed();
                                 if (destroyed) {
@@ -2600,6 +2612,18 @@ public class GameManager {
 
         String message = String.format(Locale.US, "%d,%d,%.1f,%b", gridX, gridY, health, destroyed);
         multiplayerClient.sendTCPMessage("TILE_UPDATE:" + message);
+    }
+
+    private boolean hasSharedWorldAuthority() {
+        if (!isMultiplayer) {
+            return true;
+        }
+
+        if (isHost) {
+            return true;
+        }
+
+        return multiplayerClient == null || !multiplayerClient.isConnected();
     }
 
     private void handleTileUpdate(String data) {
@@ -4488,40 +4512,42 @@ public class GameManager {
                 notifyEnemyDamage(enemy, finalDamage);
             }
 
-            int tileSize = currentDungeon.getTileSize();
-            for (int x = 0; x < currentDungeon.getWidthTiles(); x++) {
-                for (int y = 0; y < currentDungeon.getHeightTiles(); y++) {
-                    Tile tile = currentDungeon.getTiles()[x][y];
-                    if (tile != null && tile.getType() == Tile.TileType.BOX) {
-                        float tileCenterX = tile.getX() + tileSize / 2;
-                        float tileCenterY = tile.getY() + tileSize / 2;
-                        float distance = (float) Math.sqrt(
-                                Math.pow(playerCenterX - tileCenterX, 2) +
-                                        Math.pow(playerCenterY - tileCenterY, 2)
-                        );
+            if (hasSharedWorldAuthority()) {
+                int tileSize = currentDungeon.getTileSize();
+                for (int x = 0; x < currentDungeon.getWidthTiles(); x++) {
+                    for (int y = 0; y < currentDungeon.getHeightTiles(); y++) {
+                        Tile tile = currentDungeon.getTiles()[x][y];
+                        if (tile != null && tile.getType() == Tile.TileType.BOX) {
+                            float tileCenterX = tile.getX() + tileSize / 2;
+                            float tileCenterY = tile.getY() + tileSize / 2;
+                            float distance = (float) Math.sqrt(
+                                    Math.pow(playerCenterX - tileCenterX, 2) +
+                                            Math.pow(playerCenterY - tileCenterY, 2)
+                            );
 
-                        if (distance < attackRange) {
-                            tile.takeDamage(weapon.getDamage());
-                            boolean destroyed = tile.isDestroyed();
+                            if (distance < attackRange) {
+                                tile.takeDamage(weapon.getDamage());
+                                boolean destroyed = tile.isDestroyed();
 
-                            Effect spawnedEffect = null;
-                            if (destroyed) {
-                                tile.setType(Tile.TileType.FLOOR);
-                                tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                tile.setIsCollidable(false);
-                                spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
-                            } else {
-                                tile.updateTextureByHealth();
+                                Effect spawnedEffect = null;
+                                if (destroyed) {
+                                    tile.setType(Tile.TileType.FLOOR);
+                                    tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
+                                    tile.setIsCollidable(false);
+                                    spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                } else {
+                                    tile.updateTextureByHealth();
+                                }
+
+                                if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
+                                }
+
+                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    broadcastEffectSpawn(spawnedEffect);
+                                }
+                                hitSomething = true;
                             }
-
-                            if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
-                            }
-
-                            if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                broadcastEffectSpawn(spawnedEffect);
-                            }
-                            hitSomething = true;
                         }
                     }
                 }
