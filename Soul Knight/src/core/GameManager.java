@@ -75,6 +75,9 @@ public class GameManager {
     private Map<Integer, PlayerState> serverPlayerStates = new HashMap<>();
     private Set<String> processedGateEvents = new HashSet<>();
     private final Set<String> pendingGateTriggers = new LinkedHashSet<>();
+    private int hostPlayerId = -1;
+    private boolean hostPresent = false;
+    private boolean hostAlive = true;
 
     // Interpolációhoz
     private float interpolationSpeed = 5.0f;
@@ -129,7 +132,8 @@ public class GameManager {
     private String playerName;
     private int saveIdToLoad = -1;
     private float lastRangedAttackTime = Float.NEGATIVE_INFINITY;
-    private final float RANGED_COOLDOWN = 0.3f; // Másodperc
+    private final float RANGED_COOLDOWN = 0.45f; // Másodperc
+    private final float RANGED_PROJECTILE_SPEED = 240.0f;
     private boolean projectileSentThisFrame = false;
     private float enemySyncTimer = 0f;
     private final float ENEMY_SYNC_INTERVAL = 0.1f;
@@ -747,6 +751,9 @@ public class GameManager {
         this.isHost = isHost;
         this.serverIp = serverIp;
         this.serverPort = serverPort;
+        this.hostPlayerId = isHost ? myPlayerId : -1;
+        this.hostPresent = isHost;
+        this.hostAlive = true;
 
         if (isHost) {
             this.showPathDebug = false;
@@ -1388,6 +1395,7 @@ public class GameManager {
 
         interpolateOtherPlayers(deltaTime);
         updateOtherPlayerSpawnProtection(deltaTime);
+        refreshEnemyTargets();
 
         if (isHost && currentDungeon != null) {
             sendEnemyUpdatesToServer();
@@ -1439,6 +1447,7 @@ public class GameManager {
 
                     // Collision csak élő target-tel
                     if (targetPlayer != null && targetPlayer.isAlive() &&
+                            !targetPlayer.hasSpawnProtection() &&
                             collisionManager.checkCollision(targetPlayer, enemy)) {
 
                         System.out.println("👹 ENEMY-TARGET COLLISION! EnemyID: " + enemy.getId() +
@@ -1446,6 +1455,14 @@ public class GameManager {
                                 ", Damage: " + enemy.getAttackDamage());
                         float damage = enemy.getAttackDamage();
                         targetPlayer.takeDamage(damage);
+
+                        if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                            boolean isLocalPlayer = targetPlayer == player ||
+                                    (targetPlayer.getId() >= 0 && targetPlayer.getId() == myPlayerId);
+                            if (!isLocalPlayer) {
+                                sendPlayerDamageUpdate(targetPlayer, damage, targetPlayer.getHealth(), targetPlayer.isAlive());
+                            }
+                        }
 
                         if (!targetPlayer.isAlive()) {
                             int defeatedPlayerId = targetPlayer.getId();
@@ -1531,13 +1548,15 @@ public class GameManager {
             int minCheckY = Math.max(0, projGridY - 1);
             int maxCheckY = Math.min(currentDungeon.getHeightTiles() - 1, projGridY + 1);
 
+            boolean canAffectWorld = hasSharedWorldAuthority();
+
             for (int x = minCheckX; x <= maxCheckX; x++) {
                 for (int y = minCheckY; y <= maxCheckY; y++) {
                     Tile tile = currentDungeon.getTiles()[x][y];
                     if (tile != null && tile.isSolid()) {
                         if (collisionManager.checkTileCollision(projectile, tile, x, y)) {
                             projectile.setAlive(false);
-                            if (tile.getType() == Tile.TileType.BOX) {
+                            if (tile.getType() == Tile.TileType.BOX && canAffectWorld) {
                                 tile.takeDamage(1);
                                 boolean destroyed = tile.isDestroyed();
 
@@ -1611,51 +1630,47 @@ public class GameManager {
     }
 
     private Player findClosestPlayerToEnemy(Enemy enemy) {
+        Player closestPlayer = findClosestTargetForEnemy(enemy, false);
+        if (closestPlayer == null) {
+            closestPlayer = findClosestTargetForEnemy(enemy, true);
+        }
+        return closestPlayer;
+    }
+
+    private Player findClosestTargetForEnemy(Enemy enemy, boolean ignoreSpawnProtection) {
         Player closestPlayer = null;
         float closestDistance = Float.MAX_VALUE;
 
-        // ✨ CSAK élő játékosokat vegyünk figyelembe!
-
-        // Saját játékos - CSAK HA ÉL
-        if (player != null && player.isAlive()) {
-            float distance = calculateDistance(enemy.getX(), enemy.getY(),
-                    player.getX(), player.getY());
+        if (player != null && player.isAlive() && (ignoreSpawnProtection || !player.hasSpawnProtection())) {
+            float distance = calculateDistance(enemy.getX(), enemy.getY(), player.getX(), player.getY());
             if (distance < closestDistance) {
                 closestDistance = distance;
                 closestPlayer = player;
             }
         }
 
-        // Egyéb játékosok - CSAK HA ÉLNEK
         if (isMultiplayer) {
-            for (Player otherPlayer : otherPlayers.values()) {
-                if (otherPlayer != null && otherPlayer.isAlive()) { // ✨ FONTOS: null check + alive check
-                    float distance = calculateDistance(enemy.getX(), enemy.getY(),
-                            otherPlayer.getX(), otherPlayer.getY());
-                    if (distance < closestDistance) {
-                        closestDistance = distance;
-                        closestPlayer = otherPlayer;
-                    }
+            for (Map.Entry<Integer, Player> entry : otherPlayers.entrySet()) {
+                Player otherPlayer = entry.getValue();
+                if (otherPlayer == null || !otherPlayer.isAlive()) {
+                    continue;
+                }
+                if (!ignoreSpawnProtection && otherPlayer.hasSpawnProtection()) {
+                    continue;
+                }
+
+                float distance = calculateDistance(enemy.getX(), enemy.getY(), otherPlayer.getX(), otherPlayer.getY());
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestPlayer = otherPlayer;
                 }
             }
         }
 
-        // ✨ DEBUG: Nézzük meg, mit talált
         if (closestPlayer != null) {
-            System.out.println("🔍 Enemy " + enemy.getId() + " closest LIVING player: " +
-                    closestPlayer.getName() + " (distance: " + closestDistance + ")");
-        } else {
-            System.out.println("🔍 Enemy " + enemy.getId() + " - NO LIVING PLAYERS FOUND!");
-
-            // ✨ További debug: nézzük meg az összes játékos állapotát
-            System.out.println("   - Main player: " + (player != null ?
-                    player.getName() + " (alive: " + player.isAlive() + ")" : "NULL"));
-
-            if (isMultiplayer) {
-                for (Player p : otherPlayers.values()) {
-                    System.out.println("   - Other player: " + p.getName() + " (alive: " + p.isAlive() + ")");
-                }
-            }
+            System.out.println("🔍 Enemy " + enemy.getId() + " closest target: " +
+                    closestPlayer.getName() + " (distance: " + closestDistance +
+                    ", ignoreSpawnProtection=" + ignoreSpawnProtection + ")");
         }
 
         return closestPlayer;
@@ -1686,6 +1701,9 @@ public class GameManager {
 
             Player currentTarget = enemy.getTargetPlayer();
             boolean targetInvalid = currentTarget == null || !currentTarget.isAlive();
+            if (!targetInvalid && currentTarget.hasSpawnProtection()) {
+                targetInvalid = true;
+            }
             if (!targetInvalid && deadPlayer != null) {
                 targetInvalid = currentTarget == deadPlayer;
             }
@@ -1704,6 +1722,28 @@ public class GameManager {
         }
     }
 
+    private void refreshEnemyTargets() {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        for (Enemy enemy : currentDungeon.getEnemies()) {
+            if (!enemy.isAlive()) {
+                continue;
+            }
+
+            Player currentTarget = enemy.getTargetPlayer();
+            if (currentTarget == null || !currentTarget.isAlive() || currentTarget.hasSpawnProtection()) {
+                Player newTarget = findClosestPlayerToEnemy(enemy);
+                if (newTarget != null && newTarget.isAlive()) {
+                    enemy.setTargetPlayer(newTarget);
+                } else {
+                    enemy.setTargetPlayer(null);
+                }
+            }
+        }
+    }
+
     private void updateGameplaySingleplayer(float deltaTime, double currentTime) {
         if (!player.isAlive()) {
             currentState = GameState.GAME_OVER;
@@ -1711,6 +1751,7 @@ public class GameManager {
         }
 
         player.update(deltaTime, inputHandler, collisionManager, currentTime);
+        refreshEnemyTargets();
 
         int dungeonWidthPixels = currentDungeon.getWidthTiles() * currentDungeon.getTileSize();
         int dungeonHeightPixels = currentDungeon.getHeightTiles() * currentDungeon.getTileSize();
@@ -1763,13 +1804,15 @@ public class GameManager {
             int minCheckY = Math.max(0, projGridY - 1);
             int maxCheckY = Math.min(currentDungeon.getHeightTiles() - 1, projGridY + 1);
 
+            boolean canAffectWorld = hasSharedWorldAuthority();
+
             for (int x = minCheckX; x <= maxCheckX; x++) {
                 for (int y = minCheckY; y <= maxCheckY; y++) {
                     Tile tile = currentDungeon.getTiles()[x][y];
                     if (tile != null && tile.isSolid()) {
                         if (collisionManager.checkTileCollision(projectile, tile, x, y)) {
                             projectile.setAlive(false);
-                            if (tile.getType() == Tile.TileType.BOX) {
+                            if (tile.getType() == Tile.TileType.BOX && canAffectWorld) {
                                 tile.takeDamage(1);
                                 boolean destroyed = tile.isDestroyed();
                                 if (destroyed) {
@@ -1988,6 +2031,11 @@ public class GameManager {
                 if (player != null) {
                     player.setId(myPlayerId);
                 }
+                if (isHost) {
+                    hostPlayerId = myPlayerId;
+                    hostPresent = true;
+                    hostAlive = true;
+                }
                 //System.out.println("🎮 PLAYER ID FRISSÍTVE: " + myPlayerId);
                 break;
 
@@ -2053,6 +2101,8 @@ public class GameManager {
                             player.setX(currentDungeon.getPlayerSpawnX());
                             player.setY(currentDungeon.getPlayerSpawnY());
                             player.setDungeon(currentDungeon);
+                            player.activateSpawnProtection();
+                            announceSpawnStateToServer();
                         }
 
                         currentState = GameState.GAMEPLAY;
@@ -2233,6 +2283,7 @@ public class GameManager {
 
         player.setId(myPlayerId);
         player.activateSpawnProtection();
+        announceSpawnStateToServer();
 
         setupPlayerDamageListener(player);
         setupPlayerGateListener(player);
@@ -2354,6 +2405,102 @@ public class GameManager {
         return builder.toString();
     }
 
+    private List<int[]> parseGateCoordinates(String gateData) {
+        List<int[]> coordinates = new ArrayList<>();
+        if (gateData == null || gateData.isEmpty()) {
+            return coordinates;
+        }
+
+        String[] entries = gateData.split("\\|");
+        for (String entry : entries) {
+            String[] parts = entry.split(",");
+            if (parts.length != 2) {
+                continue;
+            }
+
+            try {
+                int gridX = Integer.parseInt(parts[0]);
+                int gridY = Integer.parseInt(parts[1]);
+                coordinates.add(new int[]{gridX, gridY});
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return coordinates;
+    }
+
+    private void applyGateTileUpdates(String gateData) {
+        if (currentDungeon == null) {
+            return;
+        }
+
+        List<int[]> coordinates = parseGateCoordinates(gateData);
+        if (coordinates.isEmpty()) {
+            return;
+        }
+
+        Map<Tile.TileType, Texture> textureMap = tileTextures;
+        Set<Long> coordinateKeys = new HashSet<>();
+
+        for (int[] coord : coordinates) {
+            if (coord == null || coord.length < 2) {
+                continue;
+            }
+
+            int gridX = coord[0];
+            int gridY = coord[1];
+
+            if (gridX < 0 || gridY < 0 ||
+                    gridX >= currentDungeon.getWidthTiles() ||
+                    gridY >= currentDungeon.getHeightTiles()) {
+                continue;
+            }
+
+            long key = (((long) gridX) << 32) | (gridY & 0xffffffffL);
+            coordinateKeys.add(key);
+
+            Tile tile = currentDungeon.getTiles()[gridX][gridY];
+            if (tile == null) {
+                continue;
+            }
+
+            tile.setType(Tile.TileType.FLOOR);
+            if (textureMap != null && textureMap.containsKey(Tile.TileType.FLOOR)) {
+                tile.setTexture(textureMap.get(Tile.TileType.FLOOR));
+            }
+            tile.setIsCollidable(false);
+        }
+
+        if (coordinateKeys.isEmpty() || currentDungeon.gateCorridorGroups == null) {
+            return;
+        }
+
+        Iterator<List<Tile>> iterator = currentDungeon.gateCorridorGroups.iterator();
+        while (iterator.hasNext()) {
+            List<Tile> group = iterator.next();
+            if (group == null || group.isEmpty()) {
+                continue;
+            }
+
+            boolean matches = true;
+            for (Tile tile : group) {
+                if (tile == null) {
+                    continue;
+                }
+
+                long key = (((long) tile.getGridX()) << 32) | (tile.getGridY() & 0xffffffffL);
+                if (!coordinateKeys.contains(key)) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches) {
+                iterator.remove();
+            }
+        }
+    }
+
     private void handleGateTriggerMessage(String gateData) {
         if (gateData == null || gateData.isEmpty()) {
             return;
@@ -2365,15 +2512,29 @@ public class GameManager {
         }
 
         if (processedGateEvents.contains(gateData)) {
+            applyGateTileUpdates(gateData);
             return;
         }
 
         List<Tile> gateGroup = findGateGroupByEventKey(gateData);
         if (gateGroup != null) {
+            boolean hasGateTile = false;
+            for (Tile tile : gateGroup) {
+                if (tile != null && tile.getType() == Tile.TileType.GATE) {
+                    hasGateTile = true;
+                    break;
+                }
+            }
+
             processedGateEvents.add(gateData);
-            player.triggerGateAnimation(gateGroup);
+            if (hasGateTile) {
+                player.triggerGateAnimation(gateGroup);
+            } else {
+                applyGateTileUpdates(gateData);
+            }
         } else {
-            pendingGateTriggers.add(gateData);
+            applyGateTileUpdates(gateData);
+            processedGateEvents.add(gateData);
         }
     }
 
@@ -2392,8 +2553,24 @@ public class GameManager {
 
             List<Tile> gateGroup = findGateGroupByEventKey(gateData);
             if (gateGroup != null) {
+                boolean hasGateTile = false;
+                for (Tile tile : gateGroup) {
+                    if (tile != null && tile.getType() == Tile.TileType.GATE) {
+                        hasGateTile = true;
+                        break;
+                    }
+                }
+
                 processedGateEvents.add(gateData);
-                player.triggerGateAnimation(gateGroup);
+                if (hasGateTile) {
+                    player.triggerGateAnimation(gateGroup);
+                } else {
+                    applyGateTileUpdates(gateData);
+                }
+                iterator.remove();
+            } else {
+                applyGateTileUpdates(gateData);
+                processedGateEvents.add(gateData);
                 iterator.remove();
             }
         }
@@ -2444,6 +2621,69 @@ public class GameManager {
         multiplayerClient.sendTCPMessage("TILE_UPDATE:" + message);
     }
 
+    private boolean isRemoteHostActive() {
+        if (!isMultiplayer || isHost) {
+            return false;
+        }
+
+        if (hostPlayerId < 0) {
+            return multiplayerClient != null && multiplayerClient.isConnected();
+        }
+
+        if (!hostPresent) {
+            return false;
+        }
+
+        if (hostPlayerId == myPlayerId) {
+            return player != null && player.isAlive();
+        }
+
+        Player hostPlayer = otherPlayers.get(hostPlayerId);
+        if (hostPlayer != null) {
+            return hostPlayer.isAlive();
+        }
+
+        return hostAlive;
+    }
+
+    private int determineFallbackAuthority() {
+        int fallbackId = Integer.MAX_VALUE;
+
+        if (player != null && player.isAlive() && myPlayerId >= 0) {
+            fallbackId = Math.min(fallbackId, myPlayerId);
+        }
+
+        for (Map.Entry<Integer, Player> entry : otherPlayers.entrySet()) {
+            Player candidate = entry.getValue();
+            if (candidate != null && candidate.isAlive()) {
+                fallbackId = Math.min(fallbackId, entry.getKey());
+            }
+        }
+
+        return fallbackId == Integer.MAX_VALUE ? -1 : fallbackId;
+    }
+
+    private boolean hasSharedWorldAuthority() {
+        if (!isMultiplayer) {
+            return true;
+        }
+
+        if (isHost) {
+            return true;
+        }
+
+        if (multiplayerClient == null || !multiplayerClient.isConnected()) {
+            return true;
+        }
+
+        if (isRemoteHostActive()) {
+            return false;
+        }
+
+        int fallbackAuthority = determineFallbackAuthority();
+        return fallbackAuthority >= 0 && fallbackAuthority == myPlayerId;
+    }
+
     private void handleTileUpdate(String data) {
         if (currentDungeon == null || data == null || data.isEmpty()) {
             return;
@@ -2484,7 +2724,7 @@ public class GameManager {
     }
 
     private void sendPlayerDamageUpdate(Player damagedPlayer, float damageAmount, float newHealth, boolean isAlive) {
-        if (multiplayerClient == null) {
+        if (multiplayerClient == null || !multiplayerClient.isConnected()) {
             return;
         }
 
@@ -2503,6 +2743,18 @@ public class GameManager {
         }
 
         multiplayerClient.sendPlayerDamage(damagedPlayerId, damagedPlayerName, damageAmount, newHealth, isAlive);
+    }
+
+    private void announceSpawnStateToServer() {
+        if (!isMultiplayer || multiplayerClient == null || !multiplayerClient.isConnected() || player == null) {
+            return;
+        }
+
+        player.setHealth(player.getMaxHealth());
+        player.setAlive(true);
+
+        multiplayerClient.sendPlayerPosition(player.getX(), player.getY());
+        sendPlayerDamageUpdate(player, 0f, player.getHealth(), true);
     }
 
     private void generateDungeonWithSeed(long seed) {
@@ -2557,6 +2809,7 @@ public class GameManager {
             player.setY(currentDungeon.getPlayerSpawnY());
             player.setDungeon(currentDungeon); // ✨ FONTOS: dungeon beállítása
             player.activateSpawnProtection();
+            announceSpawnStateToServer();
 
 //            System.out.println("   - After: " + player.getX() + ", " + player.getY());
 
@@ -2635,8 +2888,8 @@ public class GameManager {
             magnitude = 1.0f; // Default érték
         }
 
-        float velocityX = (dx / magnitude) * 300.0f;
-        float velocityY = (dy / magnitude) * 300.0f;
+        float velocityX = (dx / magnitude) * RANGED_PROJECTILE_SPEED;
+        float velocityY = (dy / magnitude) * RANGED_PROJECTILE_SPEED;
 
         float damage = weapon.getDamage();
 
@@ -3004,6 +3257,11 @@ public class GameManager {
         otherPlayer.setHealth(playerState.getHealth());
         otherPlayer.setAlive(playerState.isAlive());
 
+        if (playerState.getPlayerId() == hostPlayerId) {
+            hostPresent = true;
+            hostAlive = playerState.isAlive();
+        }
+
         float newX = playerState.getX();
         float newY = playerState.getY();
         otherPlayer.setTargetX(newX);
@@ -3020,6 +3278,10 @@ public class GameManager {
     private void syncOwnPlayer(PlayerState serverState) {
         player.setHealth(serverState.getHealth());
         player.setAlive(serverState.isAlive());
+        if (isHost) {
+            hostAlive = serverState.isAlive();
+            hostPresent = true;
+        }
     }
 
     private void interpolateOtherPlayers(float deltaTime) {
@@ -3064,8 +3326,15 @@ public class GameManager {
         //float spawnX = currentDungeon != null ? currentDungeon.getPlayerSpawnX() : playerState.getX();
         //float spawnY = currentDungeon != null ? currentDungeon.getPlayerSpawnY() : playerState.getY();
 
+        float spawnX = playerState.getX();
+        float spawnY = playerState.getY();
+        if (currentDungeon != null) {
+            spawnX = currentDungeon.getPlayerSpawnX();
+            spawnY = currentDungeon.getPlayerSpawnY();
+        }
+
         Player otherPlayer = new Player(
-                playerState.getX(), playerState.getY(),
+                spawnX, spawnY,
                 50, 50, playerIdleTexture, window, weaponFactory,
                 tileTextures.get(Tile.TileType.FLOOR), textRenderer
         );
@@ -3108,6 +3377,7 @@ public class GameManager {
             String ability = parts[2];
             float spawnX = 100f;
             float spawnY = 100f;
+            boolean joinedPlayerIsHost = false;
 
             if (parts.length >= 5) {
                 try {
@@ -3115,6 +3385,20 @@ public class GameManager {
                     spawnY = Float.parseFloat(parts[4]);
                 } catch (NumberFormatException ignored) {
                 }
+            }
+
+            if (parts.length >= 6) {
+                joinedPlayerIsHost = Boolean.parseBoolean(parts[5]);
+            }
+
+            if (joinedPlayerIsHost) {
+                hostPlayerId = playerId;
+                hostPresent = true;
+                hostAlive = true;
+            } else if (!isHost && (hostPlayerId < 0 || playerId < hostPlayerId)) {
+                hostPlayerId = playerId;
+                hostPresent = true;
+                hostAlive = true;
             }
 
             //System.out.println("👥 Player joined: " + playerName + " (ID: " + playerId + ")");
@@ -3137,6 +3421,11 @@ public class GameManager {
 
         if (remotePlayerEffects != null) {
             remotePlayerEffects.remove(playerId);
+        }
+
+        if (playerId == hostPlayerId) {
+            hostPresent = false;
+            hostAlive = false;
         }
 
         forceEnemyRetarget(playerId);
@@ -3222,31 +3511,8 @@ public class GameManager {
                 Player otherPlayer = otherPlayers.get(playerId);
                 switch (action) {
                     case "SHOOT":
-                        WeaponInterface weapon = otherPlayer.getCurrentWeapon();
-                        if (weapon instanceof Weapon) {
-                            // Számoljuk ki az irányvektort a célpont alapján
-                            float dx = x - otherPlayer.getX();
-                            float dy = y - otherPlayer.getY();
-                            float magnitude = (float) Math.sqrt(dx * dx + dy * dy);
-                            float dirX = magnitude > 0 ? dx / magnitude : 0;
-                            float dirY = magnitude > 0 ? dy / magnitude : 0;
-                            float speed = 300.0f; // Alapértelmezett sebesség
-                            float damage = weapon.getBaseDamage(); // Fegyver sebzése
-                            Projectile projectile = new Projectile(
-                                    otherPlayer.getX(),
-                                    otherPlayer.getY(),
-                                    10, // Példa szélesség
-                                    10, // Példa magasság
-                                    damage,
-                                    speed,
-                                    dirX,
-                                    dirY,
-                                    otherPlayer
-                            );
-                            projectile.setId(projectiles.size() + 1); // Egyszerű ID kiosztás
-                            projectiles.add(projectile);
-                            //System.out.println("🔫 Player " + playerId + " shot a projectile");
-                        }
+                        // A lövedékeket a szerver PROJECTILE_CREATED üzenetei hozzák létre,
+                        // itt elegendő az animációkat kezelni (ha szükséges).
                         break;
                     case "MELEE":
                         if (otherPlayer.getCurrentWeapon() instanceof MeleeWeapon) {
@@ -3282,6 +3548,11 @@ public class GameManager {
                 System.out.println("💥 SAJÁT SEBZÉS FRISSÍTÉS: " + newHealth + " HP");
 
                 if (player != null) {
+                    if (player.hasSpawnProtection() && newHealth < player.getHealth()) {
+                        System.out.println("🛡️ Ignoring damage while spawn protection is active. Reasserting spawn state.");
+                        announceSpawnStateToServer();
+                        return;
+                    }
                     player.setHealth(newHealth);
                     player.setAlive(isAlive);
 
@@ -3290,6 +3561,10 @@ public class GameManager {
                         currentState = GameState.GAME_OVER;
                         forceEnemyRetarget(damagedPlayerId);
                     }
+                }
+                if (isHost) {
+                    hostAlive = isAlive;
+                    hostPresent = true;
                 }
             }
             // ✨ MÁSIK JÁTÉKOS SEBZÉSE
@@ -3302,12 +3577,18 @@ public class GameManager {
                 if (targetPlayer != null) {
                     targetPlayer.setHealth(newHealth);
                     targetPlayer.setAlive(isAlive);
+                    if (damagedPlayerId == hostPlayerId) {
+                        hostAlive = isAlive;
+                        hostPresent = true;
+                    }
                     System.out.println("👥 MÁSIK JÁTÉKOS SEBZÉSE: " + damagedPlayerName + " - " + newHealth + " HP");
                     if (!isAlive) {
                         forceEnemyRetarget(damagedPlayerId);
                     }
                 }
             }
+
+            refreshEnemyTargets();
 
         } catch (Exception e) {
             System.err.println("❌ Error in handlePlayerDamageUpdate: " + e.getMessage());
@@ -3322,6 +3603,22 @@ public class GameManager {
 
         try {
             int eliminatedPlayerId = Integer.parseInt(data.trim());
+            if (eliminatedPlayerId == myPlayerId) {
+                if (player != null) {
+                    player.setAlive(false);
+                }
+                if (isHost) {
+                    hostAlive = false;
+                }
+            } else {
+                Player eliminated = otherPlayers.get(eliminatedPlayerId);
+                if (eliminated != null) {
+                    eliminated.setAlive(false);
+                }
+                if (eliminatedPlayerId == hostPlayerId) {
+                    hostAlive = false;
+                }
+            }
             forceEnemyRetarget(eliminatedPlayerId);
         } catch (NumberFormatException ignored) {
         }
@@ -4209,7 +4506,7 @@ public class GameManager {
 
             float dirX = dx / distance;
             float dirY = dy / distance;
-            float speed = 300.0f;
+            float speed = RANGED_PROJECTILE_SPEED;
             float damage = weapon.getDamage();
 
             //System.out.println("🎯 Irány: " + dirX + ", " + dirY);
@@ -4318,40 +4615,42 @@ public class GameManager {
                 notifyEnemyDamage(enemy, finalDamage);
             }
 
-            int tileSize = currentDungeon.getTileSize();
-            for (int x = 0; x < currentDungeon.getWidthTiles(); x++) {
-                for (int y = 0; y < currentDungeon.getHeightTiles(); y++) {
-                    Tile tile = currentDungeon.getTiles()[x][y];
-                    if (tile != null && tile.getType() == Tile.TileType.BOX) {
-                        float tileCenterX = tile.getX() + tileSize / 2;
-                        float tileCenterY = tile.getY() + tileSize / 2;
-                        float distance = (float) Math.sqrt(
-                                Math.pow(playerCenterX - tileCenterX, 2) +
-                                        Math.pow(playerCenterY - tileCenterY, 2)
-                        );
+            if (hasSharedWorldAuthority()) {
+                int tileSize = currentDungeon.getTileSize();
+                for (int x = 0; x < currentDungeon.getWidthTiles(); x++) {
+                    for (int y = 0; y < currentDungeon.getHeightTiles(); y++) {
+                        Tile tile = currentDungeon.getTiles()[x][y];
+                        if (tile != null && tile.getType() == Tile.TileType.BOX) {
+                            float tileCenterX = tile.getX() + tileSize / 2;
+                            float tileCenterY = tile.getY() + tileSize / 2;
+                            float distance = (float) Math.sqrt(
+                                    Math.pow(playerCenterX - tileCenterX, 2) +
+                                            Math.pow(playerCenterY - tileCenterY, 2)
+                            );
 
-                        if (distance < attackRange) {
-                            tile.takeDamage(weapon.getDamage());
-                            boolean destroyed = tile.isDestroyed();
+                            if (distance < attackRange) {
+                                tile.takeDamage(weapon.getDamage());
+                                boolean destroyed = tile.isDestroyed();
 
-                            Effect spawnedEffect = null;
-                            if (destroyed) {
-                                tile.setType(Tile.TileType.FLOOR);
-                                tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
-                                tile.setIsCollidable(false);
-                                spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
-                            } else {
-                                tile.updateTextureByHealth();
+                                Effect spawnedEffect = null;
+                                if (destroyed) {
+                                    tile.setType(Tile.TileType.FLOOR);
+                                    tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
+                                    tile.setIsCollidable(false);
+                                    spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
+                                } else {
+                                    tile.updateTextureByHealth();
+                                }
+
+                                if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
+                                }
+
+                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    broadcastEffectSpawn(spawnedEffect);
+                                }
+                                hitSomething = true;
                             }
-
-                            if (isMultiplayer && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
-                            }
-
-                            if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
-                                broadcastEffectSpawn(spawnedEffect);
-                            }
-                            hitSomething = true;
                         }
                     }
                 }
