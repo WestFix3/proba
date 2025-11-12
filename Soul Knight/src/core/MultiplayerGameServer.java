@@ -618,12 +618,13 @@ public class MultiplayerGameServer {
 
             // ✨ FONTOS: KÜLDJÜK EL A VALÓDI NEVET!
             broadcastTCPMessage(String.format(Locale.US,
-                    "PLAYER_JOINED:%d:%s:%s:%.2f:%.2f",
+                    "PLAYER_JOINED:%d:%s:%s:%.2f:%.2f:%b",
                     session.getPlayerId(),
                     playerName,
                     playerAbility,
                     sharedSpawnX,
-                    sharedSpawnY));
+                    sharedSpawnY,
+                    session.isHost()));
 
             if (!triggeredGateEvents.isEmpty()) {
                 for (String gateEvent : triggeredGateEvents) {
@@ -1211,12 +1212,13 @@ public class MultiplayerGameServer {
         // ✨ KÜLDJÜK EL A JÁTÉKOS ADATOKAT IS
         for (PlayerSession session : connectedPlayers.values()) {
             broadcastTCPMessage(String.format(Locale.US,
-                    "PLAYER_JOINED:%d:%s:%s:%.2f:%.2f",
+                    "PLAYER_JOINED:%d:%s:%s:%.2f:%.2f:%b",
                     session.getPlayerId(),
                     session.getPlayerName(),
                     session.getPlayerAbility(),
                     sharedSpawnX,
-                    sharedSpawnY));
+                    sharedSpawnY,
+                    session.isHost()));
         }
 
         // ✨ ÉRTESÍTJÜK, HOGY A JÁTÉK KEZDŐDIK
