@@ -34,6 +34,7 @@ public class MultiplayerGameServer {
     private Set<Integer> activeEffectIds = ConcurrentHashMap.newKeySet();
     private Set<Integer> consumedEffectIds = ConcurrentHashMap.newKeySet();
     private Set<String> triggeredGateEvents = ConcurrentHashMap.newKeySet();
+    private Map<String, List<int[]>> gateTilesByEvent = new ConcurrentHashMap<>();
 
     private volatile boolean hostControlsEnemies = false;
     private volatile long lastHostEnemySync = 0L;
@@ -627,6 +628,7 @@ public class MultiplayerGameServer {
             if (!triggeredGateEvents.isEmpty()) {
                 for (String gateEvent : triggeredGateEvents) {
                     sendTCPResponse(session.getClientSocket(), "GATE_TRIGGER:" + gateEvent);
+                    sendStoredGateTileUpdates(session, gateEvent);
                 }
             }
 
@@ -691,6 +693,7 @@ public class MultiplayerGameServer {
         activeEffectIds.clear();
         consumedEffectIds.clear();
         triggeredGateEvents.clear();
+        gateTilesByEvent.clear();
         hostControlsEnemies = false;
         lastHostEnemySync = 0L;
 
@@ -1263,7 +1266,17 @@ public class MultiplayerGameServer {
         }
 
         triggeredGateEvents.add(gateData);
+
+        List<int[]> gateTiles = parseGateCoordinates(gateData);
+        if (!gateTiles.isEmpty()) {
+            gateTilesByEvent.put(gateData, new ArrayList<>(gateTiles));
+        }
+
         broadcastTCPMessage("GATE_TRIGGER:" + gateData);
+
+        if (!gateTiles.isEmpty()) {
+            broadcastGateTileUpdates(gateTiles, session);
+        }
     }
 
     private void handleTileUpdate(PlayerSession session, String tileData) {
@@ -1272,6 +1285,81 @@ public class MultiplayerGameServer {
         }
 
         broadcastTCPMessage("TILE_UPDATE:" + tileData);
+    }
+
+    private List<int[]> parseGateCoordinates(String gateData) {
+        List<int[]> coordinates = new ArrayList<>();
+        if (gateData == null || gateData.isEmpty()) {
+            return coordinates;
+        }
+
+        String[] entries = gateData.split("\\|");
+        for (String entry : entries) {
+            String[] parts = entry.split(",");
+            if (parts.length != 2) {
+                continue;
+            }
+
+            try {
+                int x = Integer.parseInt(parts[0]);
+                int y = Integer.parseInt(parts[1]);
+                coordinates.add(new int[]{x, y});
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return coordinates;
+    }
+
+    private void broadcastGateTileUpdates(List<int[]> gateTiles, PlayerSession excludeSession) {
+        if (gateTiles == null || gateTiles.isEmpty()) {
+            return;
+        }
+
+        for (PlayerSession targetSession : connectedPlayers.values()) {
+            if (targetSession == null) {
+                continue;
+            }
+
+            if (excludeSession != null && targetSession.getPlayerId() == excludeSession.getPlayerId()) {
+                continue;
+            }
+
+            sendGateTileUpdatesToSession(targetSession, gateTiles);
+        }
+    }
+
+    private void sendStoredGateTileUpdates(PlayerSession session, String gateEvent) {
+        if (session == null || gateEvent == null) {
+            return;
+        }
+
+        List<int[]> storedTiles = gateTilesByEvent.get(gateEvent);
+        if (storedTiles == null || storedTiles.isEmpty()) {
+            return;
+        }
+
+        sendGateTileUpdatesToSession(session, storedTiles);
+    }
+
+    private void sendGateTileUpdatesToSession(PlayerSession session, List<int[]> gateTiles) {
+        if (session == null || gateTiles == null || gateTiles.isEmpty()) {
+            return;
+        }
+
+        Socket socket = session.getClientSocket();
+        if (socket == null || socket.isClosed()) {
+            return;
+        }
+
+        for (int[] coord : gateTiles) {
+            if (coord == null || coord.length < 2) {
+                continue;
+            }
+
+            String tileMessage = String.format(Locale.US, "%d,%d,0,true", coord[0], coord[1]);
+            sendTCPResponse(socket, "TILE_UPDATE:" + tileMessage);
+        }
     }
 
     private void broadcastUDPToAll(String message) {
