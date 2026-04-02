@@ -126,6 +126,10 @@ public class GameManager {
     private TextRenderer textRenderer;
     private Texture fontTexture;
     private Texture teleportPadTexture;
+    private TextRenderer waitingMessageRenderer;
+    private TextRenderer waitingPlayerCountRenderer;
+    private String waitingPlayerCountText = "";
+    private boolean allPlayersReady = false;
 
     private boolean bossDefeated = false;
     private Player.Ability playerAbility;
@@ -141,6 +145,7 @@ public class GameManager {
     private int frameCounter = 0;
     private Map<Integer, Projectile> syncedProjectiles = new HashMap<>();
     private Map<Integer, Float> lastEnemyPositions = new HashMap<>();
+    private static final int MULTIPLAYER_MAX_PLAYERS = 2;
 
     // Setter a path debug beállításhoz
     public void setShowPathDebug(boolean showPathDebug) {
@@ -197,6 +202,13 @@ public class GameManager {
 
         abilitySelectionScreen = new AbilitySelectionScreen(window, width, height);
         upgradeScreen = new UpgradeChoiceScreen(window, width, height, player);
+        
+        waitingMessageRenderer = new TextRenderer(
+                "Várakozás a többi játékos csatlakozására...",
+                new java.awt.Font("Arial", java.awt.Font.BOLD, 34),
+                java.awt.Color.WHITE
+        );
+        updateWaitingPlayerCountText();
     }
 
     private void initGameplay(String playerName, Player.Ability ability) {
@@ -1938,8 +1950,49 @@ public class GameManager {
 
         List<String> messages = multiplayerClient.getReceivedMessages();
         for (String message : messages) {
-            handleServerMessage(message);
+            //handleServerMessage(message);
+        	try {
+                handleServerMessage(message);
+            } catch (Exception e) {
+                System.err.println("❌ Hiba a szerver üzenet feldolgozásakor: " + message);
+                e.printStackTrace();
+            }
         }
+    }
+
+    private int getConnectedMultiplayerPlayerCount() {
+        int detectedCount = getDetectedMultiplayerPlayerCount();
+        if (allPlayersReady) {
+            return Math.max(detectedCount, MULTIPLAYER_MAX_PLAYERS);
+        }
+        return detectedCount;
+    }
+    
+    private int getDetectedMultiplayerPlayerCount() {
+        Set<Integer> ids = new HashSet<>(serverPlayerStates.keySet());
+        if (myPlayerId > 0) {
+            ids.add(myPlayerId);
+        }
+        return Math.max(1, ids.size());
+    }
+
+    private void updateWaitingPlayerCountText() {
+        String newText = getConnectedMultiplayerPlayerCount() + "/" + MULTIPLAYER_MAX_PLAYERS;
+        if (newText.equals(waitingPlayerCountText)) {
+            return;
+        }
+
+        waitingPlayerCountText = newText;
+
+        if (waitingPlayerCountRenderer != null) {
+            waitingPlayerCountRenderer.cleanup();
+        }
+
+        waitingPlayerCountRenderer = new TextRenderer(
+                waitingPlayerCountText,
+                new java.awt.Font("Arial", java.awt.Font.PLAIN, 28),
+                java.awt.Color.LIGHT_GRAY
+        );
     }
 
     private void handleUDPMessage(String message) {
@@ -2028,6 +2081,7 @@ public class GameManager {
             case "PLAYER_ID":
                 myPlayerId = Integer.parseInt(data);
                 multiplayerClient.setPlayerId(myPlayerId);
+                updateWaitingPlayerCountText();
                 if (player != null) {
                     player.setId(myPlayerId);
                 }
@@ -2047,6 +2101,18 @@ public class GameManager {
             	//System.out.println("✅ MINDENKI KÉSZ – VÁRJUK A SZERVER DUNGEON SEED-JÉT");
                 // Fontos: ne generáljon seed-et kliens oldalon (host sem),
                 // mert az eltérő állapotot okozhat. A szerver küldi mindenkinek a DUNGEON_SEED-et.
+            	allPlayersReady = true;
+                updateWaitingPlayerCountText();
+                break;
+            
+            case "GAME_STARTING":
+                // A tényleges indulás a DUNGEON_SEED üzenetnél történik.
+                // Itt csak biztosítjuk, hogy a kliens ne maradjon hibás állapotban.
+            	allPlayersReady = true;
+                updateWaitingPlayerCountText();
+                if (currentState == GameState.LOBBY && player == null && playerAbility != null) {
+                    initGameplayMultiplayer(playerName, playerAbility);
+                }
                 break;
 
             case "DUNGEON_SEED":
@@ -2086,6 +2152,8 @@ public class GameManager {
                 }
 
                 upgradeScreen.setDungeon(enemy, boss);
+                
+                syncPendingOtherPlayers();
 
                 // ✨ MOST mehetünk gameplay state-be
                 currentState = GameState.GAMEPLAY;
@@ -2110,7 +2178,7 @@ public class GameManager {
                             player.activateSpawnProtection();
                             announceSpawnStateToServer();
                         }
-
+                        syncPendingOtherPlayers();
                         currentState = GameState.GAMEPLAY;
                     }
                 }
@@ -3361,6 +3429,25 @@ public class GameManager {
             if (playerId != myPlayerId) {
                 PlayerState playerState = new PlayerState(playerId, playerName, spawnX, spawnY, 100, 100);
                 playerState.setAbility(ability);
+                serverPlayerStates.put(playerId, playerState);
+                updateWaitingPlayerCountText();
+
+                // A másik játékos entitást csak akkor hozzuk létre,
+                // ha a dungeon és a render erőforrások már biztosan készen vannak.
+                if (currentDungeon != null && tileTextures != null) {
+                    updateOtherPlayer(playerState);
+                }
+            }
+        }
+    }
+
+    private void syncPendingOtherPlayers() {
+        if (serverPlayerStates.isEmpty()) {
+            return;
+        }
+
+        for (PlayerState playerState : serverPlayerStates.values()) {
+            if (playerState != null && playerState.getPlayerId() != myPlayerId) {
                 updateOtherPlayer(playerState);
             }
         }
@@ -3377,6 +3464,14 @@ public class GameManager {
         if (remotePlayerEffects != null) {
             remotePlayerEffects.remove(playerId);
         }
+        
+        serverPlayerStates.remove(playerId);
+        
+        if (getDetectedMultiplayerPlayerCount() < MULTIPLAYER_MAX_PLAYERS) {
+            allPlayersReady = false;
+        }
+        
+        updateWaitingPlayerCountText();
 
         if (playerId == hostPlayerId) {
             hostPresent = false;
@@ -3934,6 +4029,26 @@ public class GameManager {
 
         if (currentState == GameState.ABILITY_SELECTION) {
             abilitySelectionScreen.render();
+        } else if (currentState == GameState.LOBBY && isMultiplayer) {
+            updateWaitingPlayerCountText();
+
+            glMatrixMode(GL_PROJECTION);
+            glLoadIdentity();
+            glOrtho(0, width, 0, height, -1, 1);
+            glMatrixMode(GL_MODELVIEW);
+            glLoadIdentity();
+
+            if (waitingMessageRenderer != null) {
+                float msgX = (width - waitingMessageRenderer.getWidth()) / 2.0f;
+                float msgY = (height / 2.0f) + 20.0f;
+                waitingMessageRenderer.render(msgX, msgY, 1.0f);
+            }
+
+            if (waitingPlayerCountRenderer != null) {
+                float countX = (width - waitingPlayerCountRenderer.getWidth()) / 2.0f;
+                float countY = (height / 2.0f) - 24.0f;
+                waitingPlayerCountRenderer.render(countX, countY, 1.0f);
+            }
         } else if (currentState == GameState.GAMEPLAY) {
             if (isMultiplayer) {
                 // ✨ DEBUG: Mindig mutasd, kik vannak az otherPlayers-ben
@@ -4168,6 +4283,16 @@ public class GameManager {
         if (textRenderer != null) {
             textRenderer.cleanup();
             textRenderer = null;
+        }
+        
+        if (waitingMessageRenderer != null) {
+            waitingMessageRenderer.cleanup();
+            waitingMessageRenderer = null;
+        }
+
+        if (waitingPlayerCountRenderer != null) {
+            waitingPlayerCountRenderer.cleanup();
+            waitingPlayerCountRenderer = null;
         }
 
         if (fontTexture != null) {

@@ -356,7 +356,10 @@ public class DungeonGenerator {
                     } else if (originalTile.getType() == Tile.TileType.WEAPON_CRATE) {
                         finalTiles[x][y] = new Tile(
                                 originalTile.getType(), x, y, TILE_SIZE,
-                                originalTile.getTexture(), originalTile.getEmptyTexture(), originalTile.getWeaponId()
+                                originalTile.getTexture(),
+                                originalTile.getOpenTexture(),
+                                originalTile.getWeaponId(),
+                                originalTile.getEmptyTexture()
                         );
                     } else {
                         finalTiles[x][y] = new Tile(
@@ -640,7 +643,7 @@ public class DungeonGenerator {
             if (isValidGridCoord(crate1X, crate1Y, finalTiles) && (finalTiles[crate1X][crate1Y].getType() == Tile.TileType.FLOOR || finalTiles[crate1X][crate1Y].getType() == Tile.TileType.SHOP_FLOOR)) {
                 String randomWeaponId1 = weaponFactory.getRandomWeaponId();
                 finalTiles[crate1X][crate1Y] = new Tile(
-                        Tile.TileType.WEAPON_CRATE, crate1X, crate1Y, TILE_SIZE, weaponCrateTexture, emptyCrateTexture, randomWeaponId1
+                        Tile.TileType.WEAPON_CRATE, crate1X, crate1Y, TILE_SIZE, weaponCrateTexture, openCrateTexture, emptyCrateTexture, randomWeaponId1
                 );
                 occupiedPositions.add(new OccupiedTile(crate1X, crate1Y));
             } else {
@@ -650,7 +653,7 @@ public class DungeonGenerator {
             if (isValidGridCoord(crate2X, crate2Y, finalTiles) && (finalTiles[crate2X][crate2Y].getType() == Tile.TileType.FLOOR || finalTiles[crate2X][crate2Y].getType() == Tile.TileType.SHOP_FLOOR)) {
                 String randomWeaponId2 = weaponFactory.getRandomWeaponId();
                 finalTiles[crate2X][crate2Y] = new Tile(
-                        Tile.TileType.WEAPON_CRATE, crate2X, crate2Y, TILE_SIZE, weaponCrateTexture, emptyCrateTexture, randomWeaponId2
+                        Tile.TileType.WEAPON_CRATE, crate2X, crate2Y, TILE_SIZE, weaponCrateTexture, openCrateTexture, emptyCrateTexture, randomWeaponId2
                 );
                 occupiedPositions.add(new OccupiedTile(crate2X, crate2Y));
             } else {
