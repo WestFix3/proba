@@ -12,8 +12,8 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MultiplayerGameServer {
-    private static final int TCP_PORT =  6000;
-    private static final int UDP_PORT =  6001;
+    private static final int TCP_PORT =  5555;
+    private static final int UDP_PORT =  5556;
     private static final int MAX_PLAYERS = 2;
 
     private ServerSocket tcpServerSocket;
@@ -636,7 +636,7 @@ public class MultiplayerGameServer {
             //System.out.println("📤 Sent PLAYER_JOINED: " + session.getPlayerId() + ":" + playerName + ":" + playerAbility);
 
             // ✨ HA MINDENKI CSATLAKOZOTT, KÜLDJÜK A DUNGEON SEED-ET
-            if (connectedPlayers.size() >= 1) {
+            if (connectedPlayers.size() >= MAX_PLAYERS) {
                 broadcastTCPMessage("ALL_PLAYERS_READY");
                 //System.out.println("🚀 All players ready - starting game setup");
                 broadcastDungeonData();
@@ -659,7 +659,7 @@ public class MultiplayerGameServer {
         boolean allReady = connectedPlayers.values().stream()
                 .allMatch(PlayerSession::isReady);
 
-        if (allReady && connectedPlayers.size() >= 1) {
+        if (allReady && connectedPlayers.size() >= MAX_PLAYERS) {
             startGame();
         }
     }

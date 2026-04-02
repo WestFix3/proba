@@ -58,11 +58,6 @@ public class MultiplayerScreen {
     }
 
     private void setupKeyCallback() {
-        // Először töröljük a meglévő callback-eket
-        if (keyCallback != null) {
-            keyCallback.free();
-        }
-
         keyCallback = new GLFWKeyCallback() {
             @Override
             public void invoke(long window, int key, int scancode, int action, int mods) {
@@ -185,14 +180,12 @@ public class MultiplayerScreen {
 
     public void cleanup() {
         System.out.println("MultiplayerScreen cleaning up...");
-
-        // Callback-ek felszabadítása
-        if (keyCallback != null) {
-            keyCallback.free();
-            keyCallback = null;
-        }
-
+        
+        // Callback-ek leválasztása (ne free-zzük kézzel, mert dupla felszabadításba futhat)
+        keyCallback = null;
+        
         // Minden más callback nullázása
+        // Minden callback nullázása
         glfwSetKeyCallback(window, null);
         glfwSetCharCallback(window, null);
         glfwSetMouseButtonCallback(window, null);

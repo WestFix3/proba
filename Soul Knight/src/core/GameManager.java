@@ -2041,9 +2041,12 @@ public class GameManager {
 
             case "ALL_PLAYERS_READY":
                 //System.out.println("✅ MINDENKI KÉSZ – VÁRJUK A DUNGEON SEED-ET");
-            	if (isHost && currentState != GameState.GAMEPLAY) {
-                    generateAndSendDungeon();
-                }
+            	//if (isHost && currentState != GameState.GAMEPLAY) {
+            	//    generateAndSendDungeon();
+            	//}
+            	//System.out.println("✅ MINDENKI KÉSZ – VÁRJUK A SZERVER DUNGEON SEED-JÉT");
+                // Fontos: ne generáljon seed-et kliens oldalon (host sem),
+                // mert az eltérő állapotot okozhat. A szerver küldi mindenkinek a DUNGEON_SEED-et.
                 break;
 
             case "DUNGEON_SEED":
