@@ -473,6 +473,7 @@ public class AbilitySelectionScreen {
 
         glfwSetCharCallback(window, null);
         glfwSetKeyCallback(window, null);
+        glfwSetMouseButtonCallback(window, null);
         glDisable(GL_BLEND);
     }
 }

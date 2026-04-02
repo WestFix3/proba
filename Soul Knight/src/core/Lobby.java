@@ -307,9 +307,6 @@ public class Lobby {
             if (abilityScreen.isSelectionComplete()) {
                 System.out.println("🟢 [12] Ability selection complete - JÁTÉK INDÍTÁS!");
 
-                // ✨ FONTOS: Töröld a régi szálas megoldást!
-                // NE használj új szálat itt!
-
                 String playerName = abilityScreen.getPlayerName();
                 String ability = abilityScreen.getSelectedAbility().name();
 
@@ -322,8 +319,6 @@ public class Lobby {
                 multiplayerServerPort = serverPort;
                 multiplayerIsHost = isHost;
 
-                glfwSetWindowShouldClose(window, true);
-                
                 return;
             }
 
@@ -400,7 +395,8 @@ public class Lobby {
     }
 
     private void loop() {
-        while (!glfwWindowShouldClose(window) && !exitGame && !startSinglePlayer && !startMultiplayer && !loadGame) {
+    	while (!glfwWindowShouldClose(window) && !exitGame && !startSinglePlayer && !startMultiplayer && !loadGame
+                && !shouldStartMultiplayerGame) {
 
             setupLobbyProjection();
 

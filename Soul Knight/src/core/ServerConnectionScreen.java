@@ -6,7 +6,6 @@ import org.lwjgl.system.*;
 import rendering.TextRenderer;
 
 import java.awt.*;
-import java.net.Socket;
 import java.nio.DoubleBuffer;
 
 import static org.lwjgl.glfw.GLFW.*;
@@ -224,32 +223,14 @@ public class ServerConnectionScreen {
             return;
         }
 
-        if (testServerConnection()) {
-            hideError();
-            connectionComplete = true;
-            System.out.println("✅ VALÓDI KAPCSOLAT LÉTREJÖTT: " + serverIp + ":" + serverPort);
-            // ✨ JAVÍTOTT: Kiírjuk a player információkat is
-            System.out.println("🎮 Player: " + playerName + " (" + playerAbility + ")");
-        } else {
-            showError("Nem sikerült csatlakozni a szerverhez!");
-        }
-    }
-
-    private boolean testServerConnection() {
-        try {
-            System.out.println("🔗 VALÓDI KAPCSOLÓDÁS: " + serverIp + ":" + serverPort);
-
-            Socket socket = new Socket(serverIp, Integer.parseInt(serverPort));
-            boolean connected = socket.isConnected();
-            socket.close();
-
-            System.out.println("✅ SIKERES KAPCSOLÓDÁS A SZERVERHEZ!");
-            return connected;
-
-        } catch (Exception e) {
-            System.err.println("❌ KAPCSOLÓDÁS SIKERTELEN: " + e.getMessage());
-            return false;
-        }
+        // Fontos: itt NEM nyitunk próba socketet, mert az "szellem játékost"
+        // hozhat létre a szerveren (PLAYER_ID kiosztás + azonnali disconnect),
+        // ami multiplayerben időszakos lobby visszadobást okozhat.
+        // A valódi kapcsolatot a GameManager építi fel egyszer, kontrolláltan.
+        hideError();
+        connectionComplete = true;
+        System.out.println("✅ Csatlakozási adatok elfogadva: " + serverIp + ":" + serverPort);
+        System.out.println("🎮 Player: " + playerName + " (" + playerAbility + ")");
     }
 
     private boolean isValidIpAddress(String ip) {
