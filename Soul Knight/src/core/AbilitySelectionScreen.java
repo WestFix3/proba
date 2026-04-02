@@ -366,7 +366,7 @@ public class AbilitySelectionScreen {
 
     private void renderIconImage(Texture icon, int x, int y) {
         if (icon != null) {
-            renderTexture(icon, x - 32, y - 32, 64, 64);
+            renderTexture(icon, x - 32, y + 32, 64, -64);
         }
     }
 

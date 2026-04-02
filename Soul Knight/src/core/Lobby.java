@@ -24,6 +24,12 @@ public class Lobby {
     private boolean startMultiplayer = false;
     private boolean loadGame = false;
     private static boolean exitGame = false;
+    private boolean shouldStartMultiplayerGame = false;
+    private String multiplayerPlayerName;
+    private String multiplayerAbility;
+    private String multiplayerServerIp;
+    private String multiplayerServerPort;
+    private boolean multiplayerIsHost;
     private boolean showOptions = false;
     private int selectedMenuItem = 0;
     private final String[] menuItems = {"Single Player", "Multiplayer", "Load Game", "Options", "Exit"};
@@ -53,6 +59,8 @@ public class Lobby {
 
         if (startSinglePlayer) {
             startGameManager();
+        }else if (shouldStartMultiplayerGame) {
+            startMultiplayerGame(multiplayerPlayerName, multiplayerAbility, multiplayerServerIp, multiplayerServerPort, multiplayerIsHost);
         }
     }
 
@@ -107,21 +115,21 @@ public class Lobby {
     }
 
     private void initTextRenderers() {
-        titleRenderer = new TextRenderer("MAIN MENU", new Font("Arial", Font.BOLD, 48), Color.WHITE);
+        titleRenderer = new TextRenderer("MAIN MENU", new Font("Arial", Font.BOLD, 48), Color.BLACK);
 
         menuItemRenderers = new TextRenderer[menuItems.length];
         for (int i = 0; i < menuItems.length; i++) {
-            menuItemRenderers[i] = new TextRenderer(menuItems[i], new Font("Arial", Font.PLAIN, 32), Color.WHITE);
+            menuItemRenderers[i] = new TextRenderer(menuItems[i], new Font("Arial", Font.PLAIN, 32), Color.BLACK);
         }
 
         instructionRenderer = new TextRenderer("Use UP/DOWN to navigate, ENTER to select, ESC to exit",
                 new Font("Arial", Font.PLAIN, 16), Color.LIGHT_GRAY);
 
-        optionsTitleRenderer = new TextRenderer("OPTIONS", new Font("Arial", Font.BOLD, 48), Color.WHITE);
+        optionsTitleRenderer = new TextRenderer("OPTIONS", new Font("Arial", Font.BOLD, 48), Color.BLACK);
 
         optionsItemRenderers = new TextRenderer[optionsItems.length];
         for (int i = 0; i < optionsItems.length; i++) {
-            optionsItemRenderers[i] = new TextRenderer(optionsItems[i], new Font("Arial", Font.PLAIN, 32), Color.WHITE);
+            optionsItemRenderers[i] = new TextRenderer(optionsItems[i], new Font("Arial", Font.PLAIN, 32), Color.BLACK);
         }
 
         optionsInstructionRenderer = new TextRenderer("Use UP/DOWN to navigate, ENTER to toggle/select, ESC to back",
@@ -307,21 +315,15 @@ public class Lobby {
 
                 abilityScreen.cleanup();
 
-                // ✨ JAVÍTÁS: ZÁRD BE a lobby ablakot ELŐSZÖR
+                shouldStartMultiplayerGame = true;
+                multiplayerPlayerName = playerName;
+                multiplayerAbility = ability;
+                multiplayerServerIp = serverIp;
+                multiplayerServerPort = serverPort;
+                multiplayerIsHost = isHost;
+
                 glfwSetWindowShouldClose(window, true);
-                glfwPollEvents(); // Biztosítsd, hogy a bezárás feldolgozásra kerül
-
-                // ✨ JAVÍTÁS: VÁRJ egy kicsit, hogy a GLFW leálljon
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-
-                // Most indítsd a játékot - CSAK EGYSZER!
-                startMultiplayerGame(playerName, ability, serverIp, serverPort, isHost);
-
-                // ✨ FONTOS: RETURN, hogy NE fusson tovább a metódus!
+                
                 return;
             }
 
@@ -394,7 +396,7 @@ public class Lobby {
     private void updateOptionsText() {
         optionsItems[0] = "Show Path Debug: " + (showPathDebug ? "ON" : "OFF");
         optionsItemRenderers[0] = new TextRenderer(optionsItems[0], new Font("Arial", Font.PLAIN, 32),
-                selectedOption == 0 ? Color.YELLOW : Color.WHITE);
+                selectedOption == 0 ? Color.YELLOW : Color.BLACK);
     }
 
     private void loop() {
@@ -447,7 +449,7 @@ public class Lobby {
         titleRenderer.render(width / 2 - titleRenderer.getWidth() / 2, height - 100, 1.0f);
 
         for (int i = 0; i < menuItems.length; i++) {
-            Color color = (i == selectedMenuItem) ? Color.YELLOW : Color.WHITE;
+            Color color = (i == selectedMenuItem) ? Color.YELLOW : Color.BLACK;
             Font font = (i == selectedMenuItem) ? new Font("Arial", Font.BOLD, 32) : new Font("Arial", Font.PLAIN, 32);
 
             menuItemRenderers[i] = new TextRenderer(menuItems[i], font, color);
@@ -461,7 +463,7 @@ public class Lobby {
         optionsTitleRenderer.render(width / 2 - optionsTitleRenderer.getWidth() / 2, height - 100, 1.0f);
 
         for (int i = 0; i < optionsItems.length; i++) {
-            Color color = (i == selectedOption) ? Color.YELLOW : Color.WHITE;
+            Color color = (i == selectedOption) ? Color.YELLOW : Color.BLACK;
             Font font = (i == selectedOption) ? new Font("Arial", Font.BOLD, 32) : new Font("Arial", Font.PLAIN, 32);
 
             optionsItemRenderers[i] = new TextRenderer(optionsItems[i], font, color);
@@ -488,9 +490,6 @@ public class Lobby {
         System.out.println("🎯 MULTIPLAYER JÁTÉK INDÍTÁSA - CSAK EGYSZER!");
 
         try {
-            // Várj, hogy a lobby ablak teljesen bezáródjon
-            Thread.sleep(500);
-
             GameManager gameManager = new GameManager();
             gameManager.setShowPathDebug(showPathDebug);
 
