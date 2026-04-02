@@ -764,8 +764,9 @@ public class GameManager {
         this.serverIp = serverIp;
         this.serverPort = serverPort;
 
-        // ✨ FONTOS: Állítsuk be az állapotot
-        this.currentState = GameState.ABILITY_SELECTION;
+        // Multiplayerben a választás már a Lobby-ban megtörtént,
+        // ezért itt nem jelenítjük meg újra az ability screen-t.
+        this.currentState = GameState.LOBBY;
 
         // Inicializáljuk a multiplayer kapcsolatot
         initMultiplayer(serverIp, serverPort, isHost);
@@ -2040,6 +2041,9 @@ public class GameManager {
 
             case "ALL_PLAYERS_READY":
                 //System.out.println("✅ MINDENKI KÉSZ – VÁRJUK A DUNGEON SEED-ET");
+            	if (isHost && currentState != GameState.GAMEPLAY) {
+                    generateAndSendDungeon();
+                }
                 break;
 
             case "DUNGEON_SEED":

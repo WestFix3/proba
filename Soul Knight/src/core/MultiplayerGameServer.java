@@ -12,8 +12,8 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MultiplayerGameServer {
-    private static final int TCP_PORT = 5555;
-    private static final int UDP_PORT = 5556;
+    private static final int TCP_PORT =  6000;
+    private static final int UDP_PORT =  6001;
     private static final int MAX_PLAYERS = 2;
 
     private ServerSocket tcpServerSocket;
