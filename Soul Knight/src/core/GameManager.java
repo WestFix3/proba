@@ -5006,12 +5006,22 @@ public class GameManager {
             PlayerEffect effect = iterator.next();
             effect.duration -= deltaTime;
             if (effect.duration <= 0f) {
+            	boolean hasSameTypeStillActive = false;
+                for (PlayerEffect otherEffect : effectsList) {
+                    if (otherEffect != effect && otherEffect.type == effect.type && otherEffect.duration > 0f) {
+                        hasSameTypeStillActive = true;
+                        break;
+                    }
+                }
+                
                 switch (effect.type) {
                     case SPEED_BOOST:
-                        target.setMoveSpeed(target.getBaseMoveSpeed());
+                    	if (!hasSameTypeStillActive) {
+                            target.setMoveSpeed(target.getBaseMoveSpeed());
+                        }
                         break;
                     case DAMAGE_BOOST:
-                        if (target.getCurrentWeapon() != null) {
+                    	if (!hasSameTypeStillActive && target.getCurrentWeapon() != null) {
                             target.setDamage(target.getCurrentWeapon().getBaseDamage());
                         }
                         break;

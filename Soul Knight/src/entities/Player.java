@@ -369,7 +369,7 @@ public class Player extends Entity {
         float dx = 0;
         float dy = 0;
 
-        float effectiveMoveSpeed = baseMoveSpeed * abilityMoveSpeedMultiplier;
+        float effectiveMoveSpeed = moveSpeed * abilityMoveSpeedMultiplier;
 
         if (inputHandler.isKeyDown(GLFW_KEY_W)) {
             dy -= effectiveMoveSpeed * deltaTime;
@@ -717,7 +717,7 @@ public class Player extends Entity {
     }
 
     public float getEffectiveMoveSpeed() {
-        return baseMoveSpeed * abilityMoveSpeedMultiplier;
+    	return moveSpeed * abilityMoveSpeedMultiplier;
     }
 
     public boolean isAbilityActive() {

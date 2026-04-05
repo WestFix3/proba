@@ -652,7 +652,7 @@ public class DungeonGenerator {
             if (isValidGridCoord(crate2X, crate2Y, finalTiles) && (finalTiles[crate2X][crate2Y].getType() == Tile.TileType.FLOOR || finalTiles[crate2X][crate2Y].getType() == Tile.TileType.SHOP_FLOOR)) {
                 String randomWeaponId2 = weaponFactory.getRandomWeaponId();
                 finalTiles[crate2X][crate2Y] = new Tile(
-                		 Tile.TileType.WEAPON_CRATE, crate2X, crate2Y, TILE_SIZE, weaponCrateTexture, openCrateTexture, randomWeaponId2, emptyCrateTexture);
+                		Tile.TileType.WEAPON_CRATE, crate2X, crate2Y, TILE_SIZE, weaponCrateTexture, openCrateTexture, randomWeaponId2, emptyCrateTexture);
                 occupiedPositions.add(new OccupiedTile(crate2X, crate2Y));
             } else {
                 System.out.println("Warning: Could not place weapon crate 2 in shop room.");

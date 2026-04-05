@@ -1,6 +1,7 @@
 package entities;
 
 import rendering.Texture;
+import rendering.TextureLoader;
 import rendering.TextRenderer;
 import world.Dungeon;
 import physics.CollisionManager;
@@ -18,6 +19,7 @@ public class Boss extends Enemy {
     // --- BOSS SPECIFIC ATTRIBUTES ---
     private CollisionManager collisionManager;
     private Texture texture;
+    private Texture minionTexture;
     private TextRenderer textRenderer;
     private BossState currentState = BossState.NORMAL;
     private float stateTimer = 0.0f;
@@ -62,6 +64,14 @@ public class Boss extends Enemy {
                 TextRenderer textRenderer, Dungeon dungeon, CollisionManager collisionManager, Player targetPlayer) {
         super(x, y, width, height, texture, initialHealth, textRenderer, dungeon, collisionManager, targetPlayer);
 
+        this.collisionManager = collisionManager;
+        this.textRenderer = textRenderer;
+        this.texture = texture;
+        this.minionTexture = TextureLoader.loadTexture("boss_minion.png");
+        if (this.minionTexture == null) {
+            this.minionTexture = texture;
+        }
+        
         // Boss specific settings
         this.moveSpeed = 40.0f; // Slower base speed
         this.attackDamage = 30.0f; // Higher base damage
@@ -372,10 +382,11 @@ public class Boss extends Enemy {
                     float spawnY = getY() + (float)(Math.sin(angle) * spawnRadius);
 
                     if (!checkCollision(spawnX, spawnY)) {
+                    	Texture minionSpawnTexture = minionTexture != null ? minionTexture : texture;
                         Enemy minion = new Enemy(
                                 spawnX, spawnY,
                                 40, 40,
-                                texture,
+                                minionSpawnTexture,
                                 30.0f,
                                 textRenderer, dungeon, collisionManager, targetPlayer
                         );
