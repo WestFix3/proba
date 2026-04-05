@@ -62,13 +62,25 @@ public class Projectile extends Entity {
         if (!alive) return;
 
         // Lövedék rajzolása
-        glColor3f(1.0f, 1.0f, 0.0f);
-        glBegin(GL_QUADS);
-        glVertex2f(x, y);
-        glVertex2f(x + width, y);
-        glVertex2f(x + width, y + height);
-        glVertex2f(x, y + height);
-        glEnd();
+        if (texture != null) {
+            texture.bind();
+            glColor3f(1.0f, 1.0f, 1.0f);
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, 0); glVertex2f(x, y);
+            glTexCoord2f(1, 0); glVertex2f(x + width, y);
+            glTexCoord2f(1, 1); glVertex2f(x + width, y + height);
+            glTexCoord2f(0, 1); glVertex2f(x, y + height);
+            glEnd();
+            texture.unbind();
+        } else {
+            glColor3f(1.0f, 1.0f, 0.0f);
+            glBegin(GL_QUADS);
+            glVertex2f(x, y);
+            glVertex2f(x + width, y);
+            glVertex2f(x + width, y + height);
+            glVertex2f(x, y + height);
+            glEnd();
+        }
         glColor3f(1.0f, 1.0f, 1.0f);
     }
 

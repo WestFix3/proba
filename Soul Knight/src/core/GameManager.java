@@ -126,6 +126,7 @@ public class GameManager {
     private TextRenderer textRenderer;
     private Texture fontTexture;
     private Texture teleportPadTexture;
+    private Texture projectileTexture;
     private TextRenderer waitingMessageRenderer;
     private TextRenderer waitingPlayerCountRenderer;
     private String waitingPlayerCountText = "";
@@ -244,6 +245,14 @@ public class GameManager {
         if (walk3 != null) walkFrames.add(walk3);
         else System.err.println("HIBA: Nem sikerült betölteni a player_walk3.png textúrát.");
         Sprite walkSprite = walkFrames.isEmpty() ? null : new Sprite(walkFrames, 0.1f, true);
+        
+        projectileTexture = TextureLoader.loadTexture("projectile.png");
+        if (projectileTexture == null) {
+            projectileTexture = TextureLoader.loadTexture("ranged_attack1.png");
+            if (projectileTexture == null) {
+                System.err.println("HIBA: Nem sikerült betölteni a projectile.png vagy ranged_attack1.png textúrát.");
+            }
+        }
 
         activeWalkFrames = new ArrayList<>();
         String abilityTextureName;
@@ -825,6 +834,14 @@ public class GameManager {
         if (walk2 != null) walkFrames.add(walk2);
         if (walk3 != null) walkFrames.add(walk3);
         Sprite walkSprite = walkFrames.isEmpty() ? null : new Sprite(walkFrames, 0.1f, true);
+        
+        projectileTexture = TextureLoader.loadTexture("projectile.png");
+        if (projectileTexture == null) {
+            projectileTexture = TextureLoader.loadTexture("ranged_attack1.png");
+            if (projectileTexture == null) {
+                System.err.println("HIBA: Nem sikerült betölteni a projectile.png vagy ranged_attack1.png textúrát.");
+            }
+        }
 
         activeWalkFrames = new ArrayList<>();
         String abilityTextureName;
@@ -1047,6 +1064,14 @@ public class GameManager {
         if (walk3 != null) walkFrames.add(walk3);
         else System.err.println("HIBA: Nem sikerült betölteni a player_walk3.png textúrát.");
         Sprite walkSprite = walkFrames.isEmpty() ? null : new Sprite(walkFrames, 0.1f, true);
+        
+        projectileTexture = TextureLoader.loadTexture("projectile.png");
+        if (projectileTexture == null) {
+            projectileTexture = TextureLoader.loadTexture("ranged_attack1.png");
+            if (projectileTexture == null) {
+                System.err.println("HIBA: Nem sikerült betölteni a projectile.png vagy ranged_attack1.png textúrát.");
+            }
+        }
 
         hud = new HUD(width, height);
 
@@ -2959,10 +2984,18 @@ public class GameManager {
         Projectile newProjectile = weapon.shoot(player, player.getX(), player.getY(),
                 targetX, targetY, (float) currentTime);
         if (newProjectile != null) {
+        	applyProjectileTexture(newProjectile);
             projectiles.add(newProjectile);
             player.startAttackAnimation();
         }
     }
+    
+    private void applyProjectileTexture(Projectile projectile) {
+        if (projectile != null && projectileTexture != null) {
+            projectile.setTexture(projectileTexture);
+        }
+    }
+
 
     private ProjectileState deserializeProjectileState(String data) {
 //        System.out.println("🔍 ===== DESERIALIZE PROJECTILE STATE =====");
@@ -3114,6 +3147,7 @@ public class GameManager {
 
         projectile.setId(projectileState.getProjectileId());
         projectile.setAlive(projectileState.isActive());
+        applyProjectileTexture(projectile);
 
         // Hozzáadás a szinkronizált lövedékekhez
         syncedProjectiles.put(projectileState.getProjectileId(), projectile);
@@ -3132,6 +3166,7 @@ public class GameManager {
 
         Projectile projectile = new Projectile(x, y, 10, 10, damage, speed, dirX, dirY, owner);
         projectile.setId(projectileId);
+        applyProjectileTexture(projectile);
 
         // Hozzáadás a szinkronizált lövedékekhez
         syncedProjectiles.put(projectileId, projectile);
@@ -3969,6 +4004,7 @@ public class GameManager {
                             damage, speed, dirX, dirY, owner
                     );
                     projectile.setId(projectileId);
+                    applyProjectileTexture(projectile);
                     projectiles.add(projectile);
                     //System.out.println("💥 Projectile synced from server: ID=" + projectileId + ", x=" + x + ", y=" + y);
                 }
@@ -4008,6 +4044,7 @@ public class GameManager {
                     damage, speed, dirX, dirY, owner
             );
             newProjectile.setId(projectileId);
+            applyProjectileTexture(newProjectile);
             projectiles.add(newProjectile);
             //System.out.println("💥 New projectile created from server: ID=" + projectileId + ", x=" + x + ", y=" + y);
         }
@@ -4601,6 +4638,7 @@ public class GameManager {
                         player
                 );
 
+                applyProjectileTexture(projectile);
                 projectiles.add(projectile);
                 player.startAttackAnimation();
 
@@ -4625,6 +4663,7 @@ public class GameManager {
                         player
                 );
 
+                applyProjectileTexture(localProjectile);
                 projectiles.add(localProjectile);
                 player.startAttackAnimation();
 

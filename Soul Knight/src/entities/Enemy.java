@@ -133,7 +133,10 @@ public class Enemy extends Entity {
         boolean needsNewPath = cooldownReady || currentPath.isEmpty() || stuckTimer > STUCK_THRESHOLD;
 
         if (targetPlayer != null && needsNewPath) {
-            calculatePathToTarget(targetPlayer.getX(), targetPlayer.getY());
+        	calculatePathToTarget(
+                    targetPlayer.getX() + targetPlayer.getWidth() / 2.0f,
+                    targetPlayer.getY() + targetPlayer.getHeight() / 2.0f
+            );
             this.hasTarget = true;
             this.lastPathCalculationTime = currentTime;
             this.stuckTimer = 0.0f;
@@ -167,8 +170,11 @@ public class Enemy extends Entity {
         if (dungeon == null || currentPath == null) return;
 
         int tileSize = dungeon.getTileSize();
-        int startTileX = (int)(x / tileSize);
-        int startTileY = (int)(y / tileSize);
+        float centerX = x + width / 2.0f;
+        float centerY = y + height / 2.0f;
+
+        int startTileX = (int)(centerX / tileSize);
+        int startTileY = (int)(centerY / tileSize);
         int targetTileX = (int)(targetX / tileSize);
         int targetTileY = (int)(targetY / tileSize);
 
@@ -467,8 +473,11 @@ public class Enemy extends Entity {
         float targetWorldX = targetNode.x * tileSize + tileSize / 2.0f;
         float targetWorldY = targetNode.y * tileSize + tileSize / 2.0f;
 
-        float dx = targetWorldX - x;
-        float dy = targetWorldY - y;
+        float centerX = x + width / 2.0f;
+        float centerY = y + height / 2.0f;
+
+        float dx = targetWorldX - centerX;
+        float dy = targetWorldY - centerY;
         float distance = (float)Math.sqrt(dx * dx + dy * dy);
 
         if (distance == 0.0f) {
@@ -786,7 +795,10 @@ public class Enemy extends Entity {
     public void setTargetPlayer(Player player) {
         this.targetPlayer = player;
         if (player != null) {
-            calculatePathToTarget(player.getX(), player.getY());
+        	calculatePathToTarget(
+                    player.getX() + player.getWidth() / 2.0f,
+                    player.getY() + player.getHeight() / 2.0f
+            );
             this.hasTarget = true;
             this.lastPathCalculationTime = System.currentTimeMillis();
         } else {
