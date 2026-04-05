@@ -24,7 +24,7 @@ public class GameOverScreen {
     private int height;
     private Texture backgroundTexture;
     private TextRenderer gameOverRenderer;
-    private TextRenderer statsRenderer;
+    private TextRenderer[] statsRenderers;
     private TextRenderer returnButtonRenderer;
     private TextRenderer saveButtonRenderer;
     private boolean returnToLobby;
@@ -110,16 +110,26 @@ public class GameOverScreen {
         Font descFont = new Font("Arial", Font.PLAIN, 18);
 
         gameOverRenderer = new TextRenderer("JÁTÉK VÉGE", titleFont, Color.RED);
-        String statsText = String.format(
-                "Játékos: %s\nKépesség: %s\nÉleterő: %.0f/%.0f\nSebzés növelés: +%.0f%%\nKritikus esély: +%.0f%%",
-                playerNameForSave,
-                playerAbilityForSave != null ? playerAbilityForSave.getDisplayName() : "Nincs",
-                playerHealthForSave,
-                playerMaxHealthForSave,
-                playerDamageBoostForSave * 100,
-                playerCritChanceBoostForSave * 100
-        );
-        statsRenderer = new TextRenderer(statsText, descFont, Color.WHITE);
+        String[] statsLines = new String[] {
+                "=== JÁTÉKOS ADATOK ===",
+                "",
+                String.format("Játékos: %s", playerNameForSave),
+                String.format("Képesség: %s",
+                        playerAbilityForSave != null ? playerAbilityForSave.getDisplayName() : "Nincs"),
+                "",
+                "",
+                "",
+                "",
+                "",
+                String.format("Életerő: %.0f / %.0f", playerHealthForSave, playerMaxHealthForSave),
+                String.format("Sebzés növelés: +%.0f%%", playerDamageBoostForSave * 100),
+                String.format("Kritikus esély: +%.0f%%", playerCritChanceBoostForSave * 100)
+        };
+        statsRenderers = new TextRenderer[statsLines.length];
+
+        for (int i = 0; i < statsLines.length; i++) {
+            statsRenderers[i] = new TextRenderer(statsLines[i], descFont, Color.WHITE);
+        }
 
         returnButtonRenderer = new TextRenderer("Vissza a Lobbyba", mainFont, Color.BLACK);
         saveButtonRenderer = new TextRenderer("Játék mentése", mainFont, Color.BLACK);
@@ -232,7 +242,13 @@ public class GameOverScreen {
 
     private void renderText() {
         renderTextCentered(gameOverRenderer, width / 2, height - 100);
-        renderTextCentered(statsRenderer, width / 2, height - 250);
+
+        int startY = height - 120;
+        int lineSpacing = 30;
+
+        for (int i = 0; i < statsRenderers.length; i++) {
+            renderTextCentered(statsRenderers[i], width / 2, startY - i * lineSpacing);
+        }
     }
 
     private void renderButtons() {
@@ -370,8 +386,12 @@ public class GameOverScreen {
         if (gameOverRenderer != null) {
             gameOverRenderer.cleanup();
         }
-        if (statsRenderer != null) {
-            statsRenderer.cleanup();
+        if (statsRenderers != null) {
+            for (TextRenderer renderer : statsRenderers) {
+                if (renderer != null) {
+                    renderer.cleanup();
+                }
+            }
         }
         if (returnButtonRenderer != null) {
             returnButtonRenderer.cleanup();

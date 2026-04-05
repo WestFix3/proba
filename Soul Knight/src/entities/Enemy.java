@@ -40,6 +40,7 @@ public class Enemy extends Entity {
     private float targetX, targetY;
     private boolean hasTarget = false;
     private static final float NODE_REACH_DISTANCE = 20.0f;
+    private static final float PATH_CLEARANCE_PADDING_PIXELS = 6.0f;
     private long lastPathCalculationTime = 0;
     private static final long PATH_CALCULATION_COOLDOWN = 1000;
     private final Random pathRandom = new Random();
@@ -269,7 +270,7 @@ public class Enemy extends Entity {
             int startY = Math.min(y0, y1);
             int endY = Math.max(y0, y1);
             for (int y = startY + 1; y < endY; y++) {
-                if (isObstacle(x0, y)) return false;
+            	if (isPathBlockedForEnemySize(x0, y)) return false;
             }
             return true;
         }
@@ -278,7 +279,7 @@ public class Enemy extends Entity {
             int startX = Math.min(x0, x1);
             int endX = Math.max(x0, x1);
             for (int x = startX + 1; x < endX; x++) {
-                if (isObstacle(x, y0)) return false;
+            	if (isPathBlockedForEnemySize(x, y0)) return false;
             }
             return true;
         }
@@ -309,7 +310,7 @@ public class Enemy extends Entity {
             // Ellenőrizzük az aktuális tile-t (kivéve a kiindulási és cél pontot)
             if ((currentX != x0 || currentY != y0) &&
                     (currentX != x1 || currentY != y1) &&
-                    isObstacle(currentX, currentY)) {
+                    isPathBlockedForEnemySize(currentX, currentY)) {
                 return false;
             }
 
@@ -385,7 +386,7 @@ public class Enemy extends Entity {
             return new ArrayList<>();
         }
 
-        if (isObstacle(targetX, targetY)) {
+        if (isPathBlockedForEnemySize(targetX, targetY)) {
             return new ArrayList<>();
         }
 
@@ -422,12 +423,12 @@ public class Enemy extends Entity {
                 int neighborX = currentNode.x + dx[k];
                 int neighborY = currentNode.y + dy[k];
 
-                if (isValidTile(neighborX, neighborY) && !isObstacle(neighborX, neighborY)) {
-                    // Átlós mozgás ellenőrzés - csak akkor blokkoljuk, ha mindkét oldal fal
+                if (isValidTile(neighborX, neighborY) && !isPathBlockedForEnemySize(neighborX, neighborY)) {
+                    // Átlós mozgás ellenőrzés - ne vágjunk sarkot, ha bármelyik oldal blokkolt
                     if (k >= 4) {
-                        boolean bothSidesBlocked = isObstacle(currentNode.x + dx[k], currentNode.y) &&
-                                isObstacle(currentNode.x, currentNode.y + dy[k]);
-                        if (bothSidesBlocked) {
+                    	boolean sideXBlocked = isPathBlockedForEnemySize(currentNode.x + dx[k], currentNode.y);
+                        boolean sideYBlocked = isPathBlockedForEnemySize(currentNode.x, currentNode.y + dy[k]);
+                        if (sideXBlocked || sideYBlocked) {
                             continue;
                         }
                     }
@@ -847,6 +848,31 @@ public class Enemy extends Entity {
         if (dungeon == null) return true;
         Tile tile = dungeon.getTile(tileX, tileY);
         return tile == null || tile.isSolid();
+    }
+    
+    private boolean isPathBlockedForEnemySize(int tileX, int tileY) {
+        if (!isValidTile(tileX, tileY)) return true;
+
+        int clearanceTiles = getPathClearanceTiles();
+        for (int offsetX = -clearanceTiles; offsetX <= clearanceTiles; offsetX++) {
+            for (int offsetY = -clearanceTiles; offsetY <= clearanceTiles; offsetY++) {
+                int checkX = tileX + offsetX;
+                int checkY = tileY + offsetY;
+
+                if (!isValidTile(checkX, checkY) || isObstacle(checkX, checkY)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private int getPathClearanceTiles() {
+        if (dungeon == null) return 0;
+        float halfBodySize = Math.max(width, height) / 2.0f;
+        float requiredClearance = halfBodySize + PATH_CLEARANCE_PADDING_PIXELS;
+        return Math.max(0, (int)Math.ceil(requiredClearance / dungeon.getTileSize()) - 1);
     }
 
     /**
