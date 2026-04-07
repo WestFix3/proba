@@ -1435,7 +1435,22 @@ public class GameManager {
         updateOtherPlayerSpawnProtection(deltaTime);
         refreshEnemyTargets();
 
-        if (isHost && currentDungeon != null) {
+        boolean localEnemyAuthority = hasSharedWorldAuthority();
+        if (currentDungeon != null) {
+            for (Enemy enemy : currentDungeon.getEnemies()) {
+                if (enemy == null || !enemy.isAlive()) {
+                    continue;
+                }
+
+                if (localEnemyAuthority) {
+                    enemy.setNetworkControlled(false);
+                } else if (!isHost) {
+                    enemy.setNetworkControlled(true);
+                }
+            }
+        }
+
+        if (localEnemyAuthority && currentDungeon != null) {
             sendEnemyUpdatesToServer();
         }
 
@@ -1612,7 +1627,8 @@ public class GameManager {
                                     sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
                                 }
 
-                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                if (spawnedEffect != null && isMultiplayer && hasSharedWorldAuthority() &&
+                                        multiplayerClient != null && multiplayerClient.isConnected()) {
                                     broadcastEffectSpawn(spawnedEffect);
                                 }
                             }
@@ -1856,7 +1872,8 @@ public class GameManager {
                                     tile.setType(Tile.TileType.FLOOR);
                                     tile.setTexture(tileTextures.get(Tile.TileType.FLOOR));
                                     Effect spawnedEffect = spawnRandomEffect(tile.getX(), tile.getY());
-                                    if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                    if (spawnedEffect != null && isMultiplayer && hasSharedWorldAuthority() &&
+                                            multiplayerClient != null && multiplayerClient.isConnected()) {
                                         broadcastEffectSpawn(spawnedEffect);
                                     }
                                 } else {
@@ -2726,6 +2743,10 @@ public class GameManager {
         }
 
         if (isHost) {
+            return true;
+        }
+        
+        if (!hostPresent || !hostAlive) {
             return true;
         }
 
@@ -3791,19 +3812,19 @@ public class GameManager {
             //System.out.println("👹 [CLIENT] Received enemy update: " + data);
 
             String[] parts = data.split(",");
-            if (parts.length >= 7) {
+            if (parts.length >= 6) {
                 int enemyId = Integer.parseInt(parts[0]);
                 float x = Float.parseFloat(parts[1]);
                 float y = Float.parseFloat(parts[2]);
                 float health = Float.parseFloat(parts[3]);
                 boolean isAlive = Boolean.parseBoolean(parts[4]);
                 float damage = Float.parseFloat(parts[5]);
-                boolean critActive = Boolean.parseBoolean(parts[6]);
+                boolean critActive = parts.length >= 7 && Boolean.parseBoolean(parts[6]);
 
                 Enemy targetEnemy = findEnemyById(enemyId);
                 if (targetEnemy != null) {
                     // ✨ JAVÍTÁS: CSAK KLIENSEN LEGYEN NETWORK CONTROLLED!
-                    if (!isHost) { // ✨ FONTOS: Host-nál NE!
+                	if (!isHost && !hasSharedWorldAuthority()) { 
                         targetEnemy.setNetworkControlled(true);
                         targetEnemy.setTargetPosition(x, y);
                     } else {
@@ -4759,7 +4780,8 @@ public class GameManager {
                                     sendTileStateUpdate(x, y, tile.getHealth(), destroyed);
                                 }
 
-                                if (spawnedEffect != null && isMultiplayer && isHost && multiplayerClient != null && multiplayerClient.isConnected()) {
+                                if (spawnedEffect != null && isMultiplayer && hasSharedWorldAuthority() &&
+                                        multiplayerClient != null && multiplayerClient.isConnected()) {
                                     broadcastEffectSpawn(spawnedEffect);
                                 }
                                 hitSomething = true;
@@ -4836,7 +4858,8 @@ public class GameManager {
     }
 
     private void broadcastEffectSpawn(Effect effect) {
-        if (!isMultiplayer || !isHost || multiplayerClient == null || !multiplayerClient.isConnected() || effect == null) {
+    	if (!isMultiplayer || !hasSharedWorldAuthority() || multiplayerClient == null ||
+                !multiplayerClient.isConnected() || effect == null) {
             return;
         }
 

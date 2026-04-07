@@ -398,7 +398,7 @@ public class MultiplayerGameServer {
 
     private void handleEffectSpawn(PlayerSession session, String data) {
         try {
-            if (!session.isHost()) {
+            if (session == null) {
                 return;
             }
 
@@ -420,7 +420,7 @@ public class MultiplayerGameServer {
 
     private void handleEffectPickup(PlayerSession session, String data) {
         try {
-            if (!session.isHost()) {
+            if (session == null) {
                 return;
             }
 
